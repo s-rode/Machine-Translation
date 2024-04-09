@@ -15,8 +15,7 @@ Anzahl verschiedener Wörter:
 
 Mit command mit tr -s ' ' '\n' | sort | uniq | wc -w
 
- durchschnittliche Satzlänge (angenommen es sie sind alle durch ein 
- getrennt):
+ durchschnittliche Satzlänge (angenommen es sie sind alle durch ein \n getrennt):
 
 newstest.de:
 21.37
