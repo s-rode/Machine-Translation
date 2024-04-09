@@ -1,0 +1,27 @@
+Anzahl laufender Wörter
+   64087 newstest.de
+   67527 newstest.en
+
+ Mit command wc -w
+
+
+Anzahl verschiedener Wörter:
+
+ Newstest.de
+   13322
+
+ Newstest.en
+   10378
+
+Mit command mit tr -s ' ' '\n' | sort | uniq | wc -w
+
+ durchschnittliche Satzlänge (angenommen es sie sind alle durch ein 
+ getrennt):
+
+newstest.de:
+21.37
+
+ newstest.en:
+22.52
+
+ mit command: n1=$(cat newstest.de | wc -w) && n2=$(cat newstest.de | wc -l) && echo "$(echo "scale=2; $n1 / $n2" | bc)"  
