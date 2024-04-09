@@ -53,18 +53,30 @@ def levenhsteinWrapper(a, b):
 
 def nGramMatchingIntern(h, r, n):
     count = 0
+    hwrapper = [h]
+    break_flag = False
     while len(r) >= n:
         # sequence to match
         l1 = r[0:n]
         # iterate over hypothesis
-        for i in range(0, len(h) - n + 1):
-            # possible matching sequence
-            l2 = h[i:i + n]  # i is max. len(h) - n => we're slicing max. to len(h) - 1
-            if (l1 == l2):
-                count += 1
-                # first n words get "popped" => won't be used again (pop n-1 words first, the n'th will be popped
-                # after break)
-                r = r[n - 1:]
+        for j in range(0, len(hwrapper)):
+            if len(hwrapper[j]) >= n:
+                for i in range(0, len(hwrapper[j]) - n + 1):
+                    # possible matching sequence
+                    l2 = hwrapper[j][i:i + n]  # i is max. len(h) - n => we're slicing max. to len(h) - 1
+                    if l1 == l2:
+                        count += 1
+                        # first n words get "popped" in r => won't be used again (pop n-1 words first, the n'th will be
+                        # popped after break)
+                        r = r[n - 1:]
+                        # the match in h gets popped, splitting h => prevents formation of new sequences
+                        hwrapper.insert(j+1, hwrapper[j][i + n:])
+                        hwrapper[j] = hwrapper[j][:i]
+                        # breaking the outer for loop
+                        break_flag = True
+                        break
+            if break_flag:
+                break_flag = False
                 break
         r = r[1:]
     return count
@@ -75,4 +87,4 @@ def nGramMatching(h, r, n):
 
 
 # levenhsteinWrapper("hallo hallo ja","hallo ja hallo")
-print(nGramMatching("the cat", "the the the", 1))
+print(nGramMatching("and the one only", "I am the one and only", 2))
