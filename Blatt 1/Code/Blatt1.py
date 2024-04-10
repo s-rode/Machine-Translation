@@ -1,6 +1,15 @@
 import numpy as np
 import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument("-r", "--ref")
+parser.add_argument("-h","--hyp")
+parser.add_argument("-m", "--metric")
+args = parser.parse_args()
+
+ref_in = open(args.ref, 'r', encoding="utf-8")
+
+
 
 def levenshtein(a, b, shouldprint: bool):
     lenA = len(a) + 1
