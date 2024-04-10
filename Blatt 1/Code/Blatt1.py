@@ -51,6 +51,17 @@ def levenhsteinWrapper(a, b):
     levenshtein(a.split(), b.split())
 
 
+def nGramPrecision(data: list[tuple[str, str]], n: int):
+    nominator = 0
+    denominator = 0
+    for (r, h) in data:
+        nominator += nGramMatching(h, r, n)
+        denominator += len(fetchNGrams(h.split(), n))
+    if (denominator == 0):
+        raise Exception("Division by zero")
+    return nominator / denominator
+
+
 def nGramMatchingIntern(h, r, n):
     count = 0
     lHyp = fetchNGrams(h, n)
@@ -63,18 +74,39 @@ def nGramMatchingIntern(h, r, n):
                 break
     return count
 
-def fetchNGrams(seq ,n):
+
+def fetchNGrams(seq, n):
     list = []
-    for i in range(0,len(seq) - n + 1):
-        list.append(seq[i:i+n]) # i is max. len(h) - n => we're slicing max. to len(h) - 1
+    for i in range(0, len(seq) - n + 1):
+        list.append(seq[i:i + n])  # i is max. len(h) - n => we're slicing max. to len(h) - 1
     return list
+
 
 def nGramMatching(h, r, n):
     return nGramMatchingIntern(h.split(), r.split(), n)
 
 
+def brevityPenalty(data: list[tuple[str, str]]):
+    c = r = 0
+    for (ref, hyp) in data:
+        c += hyp.split()
+        r += ref.split()
+
+    if c > r:
+        return 1
+    else:
+        return np.exp(1 - (r / c))
+
+
+def bleu4(data: list[tuple[str, str]]):
+    bp = brevityPenalty(data)
+    s = 0
+    for i in range(1, 5):
+        s += (1 / 4) * np.log(nGramPrecision(data, i))
+    return bp * np.exp(s)
+
 # levenhsteinWrapper("hallo hallo ja","hallo ja hallo")
 
-print(nGramMatching("the cat is on the mat", "the cat cat is", 3))
 
-#print(fetchNGrams(["hallo","test","hallo","h"],2))
+# print(nGramPrecision([("the cat is on the mat", "the cat")], 1))
+# print(fetchNGrams(["hallo","test","hallo","h"],2))
