@@ -53,38 +53,28 @@ def levenhsteinWrapper(a, b):
 
 def nGramMatchingIntern(h, r, n):
     count = 0
-    hwrapper = [h]
-    break_flag = False
-    while len(r) >= n:
-        # sequence to match
-        l1 = r[0:n]
-        # iterate over hypothesis
-        for j in range(0, len(hwrapper)):
-            if len(hwrapper[j]) >= n:
-                for i in range(0, len(hwrapper[j]) - n + 1):
-                    # possible matching sequence
-                    l2 = hwrapper[j][i:i + n]  # i is max. len(h) - n => we're slicing max. to len(h) - 1
-                    if l1 == l2:
-                        count += 1
-                        # first n words get "popped" in r => won't be used again (pop n-1 words first, the n'th will be
-                        # popped after break)
-                        r = r[n - 1:]
-                        # the match in h gets popped, splitting h => prevents formation of new sequences
-                        hwrapper.insert(j+1, hwrapper[j][i + n:])
-                        hwrapper[j] = hwrapper[j][:i]
-                        # breaking the outer for loop
-                        break_flag = True
-                        break
-            if break_flag:
-                break_flag = False
+    lHyp = fetchNGrams(h, n)
+    lRef = fetchNGrams(r, n)
+    for hyp in lHyp:
+        for ref in lRef:
+            if hyp == ref:
+                count += 1
+                lRef.remove(ref)
                 break
-        r = r[1:]
     return count
 
+def fetchNGrams(seq ,n):
+    list = []
+    for i in range(0,len(seq) - n + 1):
+        list.append(seq[i:i+n]) # i is max. len(h) - n => we're slicing max. to len(h) - 1
+    return list
 
 def nGramMatching(h, r, n):
     return nGramMatchingIntern(h.split(), r.split(), n)
 
 
 # levenhsteinWrapper("hallo hallo ja","hallo ja hallo")
-print(nGramMatching("and the one only", "I am the one and only", 2))
+
+print(nGramMatching("the cat is on the mat", "the cat cat is", 3))
+
+#print(fetchNGrams(["hallo","test","hallo","h"],2))
