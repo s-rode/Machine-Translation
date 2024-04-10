@@ -1,7 +1,8 @@
 import numpy as np
+import argparse
 
 
-def levenshtein(a, b):
+def levenshtein(a, b, shouldprint: bool):
     lenA = len(a) + 1
     lenB = len(b) + 1
     if lenA == 0 or lenB == 0:
@@ -24,31 +25,56 @@ def levenshtein(a, b):
             else:
                 matr[i][j] = min(matr[i - 1][j - 1], matr[i][j - 1], matr[i - 1][j]) + 1
 
-    i = lenA - 1
-    j = lenB - 1
-    sol = []
-    while (i > 0) or (j > 0):
-        if (matr[i - 1][j] == matr[i][j] - 1):
-            sol.append(f"insert {a[i - 1]}")
-            i = i - 1
-        elif (matr[i][j - 1] == matr[i][j] - 1):
-            sol.append(f"delete {b[j - 1]}")
-            j = j - 1
-        elif (matr[i - 1][j - 1] == matr[i][j]):
-            i = i - 1
-            j = j - 1
-            sol.append("match")
-        else:
-            sol.append(f"substitute {a[i - 1]} with {b[j - 1]}")
-            i = i - 1
-            j = j - 1
-    solStr = "; ".join(sol)
-    print("Lösungsweg: ", solStr)
-    print(matr[lenA - 1][lenB - 1])
+    if shouldprint:
+        i = lenA - 1
+        j = lenB - 1
+        sol = []
+        while (i > 0) or (j > 0):
+            if (matr[i - 1][j] == matr[i][j] - 1):
+                sol.append(f"insert {a[i - 1]}")
+                i = i - 1
+            elif (matr[i][j - 1] == matr[i][j] - 1):
+                sol.append(f"delete {b[j - 1]}")
+                j = j - 1
+            elif (matr[i - 1][j - 1] == matr[i][j]):
+                i = i - 1
+                j = j - 1
+                sol.append("match")
+            else:
+                sol.append(f"substitute {a[i - 1]} with {b[j - 1]}")
+                i = i - 1
+                j = j - 1
+        solStr = "; ".join(sol)
+        print("Lösungsweg: ", solStr)
+
+    return matr[lenA - 1][lenB - 1]
 
 
-def levenhsteinWrapper(a, b):
-    levenshtein(a.split(), b.split())
+def levenhsteinWrapper(a, b, shouldprint: bool):
+    return levenshtein(a.split(), b.split(), shouldprint)
+
+
+def PER(data: list[tuple[str, str]]):
+    matches = 0
+    hyplen = 0
+    reflen = 0
+    for (r, h) in data:
+        matches += nGramMatching(h, r, 1)
+        hyplen += len(h.split())
+        reflen += len(r.split())
+    if reflen == 0:
+        raise Exception("Division by zero")
+    return 1-((matches-max(0, hyplen-reflen))/reflen)
+
+def WER(data: list[tuple[str, str]]):
+    refLength = 0
+    lvDist = 0
+    for (r, h) in data:
+        lvDist += levenhsteinWrapper(r, h, False)
+        refLength += len(r.split())
+    if refLength == 0:
+        raise Exception("Division by zero")
+    return lvDist / refLength
 
 
 def nGramPrecision(data: list[tuple[str, str]], n: int):
