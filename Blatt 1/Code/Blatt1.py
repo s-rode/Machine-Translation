@@ -1,15 +1,6 @@
 import numpy as np
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-r", "--ref")
-parser.add_argument("-h","--hyp")
-parser.add_argument("-m", "--metric")
-args = parser.parse_args()
-
-ref_in = open(args.ref, 'r', encoding="utf-8")
-
-
 
 def levenshtein(a, b, shouldprint: bool):
     lenA = len(a) + 1
@@ -39,13 +30,13 @@ def levenshtein(a, b, shouldprint: bool):
         j = lenB - 1
         sol = []
         while (i > 0) or (j > 0):
-            if (matr[i - 1][j] == matr[i][j] - 1):
+            if matr[i - 1][j] == matr[i][j] - 1:
                 sol.append(f"insert {a[i - 1]}")
                 i = i - 1
-            elif (matr[i][j - 1] == matr[i][j] - 1):
+            elif matr[i][j - 1] == matr[i][j] - 1:
                 sol.append(f"delete {b[j - 1]}")
                 j = j - 1
-            elif (matr[i - 1][j - 1] == matr[i][j]):
+            elif matr[i - 1][j - 1] == matr[i][j]:
                 i = i - 1
                 j = j - 1
                 sol.append("match")
@@ -73,7 +64,8 @@ def PER(data: list[tuple[str, str]]):
         reflen += len(r.split())
     if reflen == 0:
         raise Exception("Division by zero")
-    return 1-((matches-max(0, hyplen-reflen))/reflen)
+    return 1 - ((matches - max(0, hyplen - reflen)) / reflen)
+
 
 def WER(data: list[tuple[str, str]]):
     refLength = 0
@@ -110,11 +102,11 @@ def nGramMatchingIntern(h, r, n):
     return count
 
 
-def fetchNGrams(seq, n):
-    list = []
+def fetchNGrams(seq, n):S
+    gramlist = []
     for i in range(0, len(seq) - n + 1):
-        list.append(seq[i:i + n])  # i is max. len(h) - n => we're slicing max. to len(h) - 1
-    return list
+        gramlist.append(seq[i:i + n])  # i is max. len(h) - n => we're slicing max. to len(h) - 1
+    return gramlist
 
 
 def nGramMatching(h, r, n):
@@ -124,8 +116,8 @@ def nGramMatching(h, r, n):
 def brevityPenalty(data: list[tuple[str, str]]):
     c = r = 0
     for (ref, hyp) in data:
-        c += hyp.split()
-        r += ref.split()
+        c += len(hyp.split())
+        r += len(ref.split()) #?????? len added
 
     if c > r:
         return 1
@@ -140,8 +132,25 @@ def bleu4(data: list[tuple[str, str]]):
         s += (1 / 4) * np.log(nGramPrecision(data, i))
     return bp * np.exp(s)
 
-# levenhsteinWrapper("hallo hallo ja","hallo ja hallo")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ref")
+    parser.add_argument("--hyp")
+    parser.add_argument("--metric")
+    args = parser.parse_args()
+
+    ref_in = open(args.ref, 'r', encoding="utf-8")
+    hyp_in = open(args.hyp, 'r', encoding="utf-8")
+    data = list(zip(ref_in, hyp_in))
+    match args.metric:
+        case "WER":
+            print(WER(data))
+        case "PER":
+            print(PER(data))
+        case "BLEU":
+            print(bleu4(data))
 
 
-# print(nGramPrecision([("the cat is on the mat", "the cat")], 1))
-# print(fetchNGrams(["hallo","test","hallo","h"],2))
+if __name__ == "__main__":
+    main()
