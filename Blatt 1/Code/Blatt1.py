@@ -1,6 +1,7 @@
 import numpy as np
 import argparse
-
+import torch
+from torcheval.metrics import BLEUScore, WordErrorRate
 
 def levenshtein(a, b, shouldprint: bool):
     lenA = len(a) + 1
@@ -102,7 +103,7 @@ def nGramMatchingIntern(h, r, n):
     return count
 
 
-def fetchNGrams(seq, n):S
+def fetchNGrams(seq, n):
     gramlist = []
     for i in range(0, len(seq) - n + 1):
         gramlist.append(seq[i:i + n])  # i is max. len(h) - n => we're slicing max. to len(h) - 1
@@ -117,12 +118,14 @@ def brevityPenalty(data: list[tuple[str, str]]):
     c = r = 0
     for (ref, hyp) in data:
         c += len(hyp.split())
-        r += len(ref.split()) #?????? len added
+        r += len(ref.split())
 
     if c > r:
         return 1
-    else:
+    elif c:
         return np.exp(1 - (r / c))
+    else: # c == 0
+        return 0
 
 
 def bleu4(data: list[tuple[str, str]]):
@@ -141,15 +144,25 @@ def main():
     args = parser.parse_args()
 
     ref_in = open(args.ref, 'r', encoding="utf-8")
+    #ref_lines = ref_in.readlines() #!!! somehow readlines changes ref_in
     hyp_in = open(args.hyp, 'r', encoding="utf-8")
+    #hyp_lines = hyp_in.readlines()
     data = list(zip(ref_in, hyp_in))
+
     match args.metric:
         case "WER":
             print(WER(data))
+            #metric = WordErrorRate()
+            #metric.update(ref_lines, hyp_lines)
+            #print(metric.compute())
         case "PER":
             print(PER(data))
         case "BLEU":
             print(bleu4(data))
+            #metric = BLEUScore(n_gram=4)
+            #hyp_lines_lists = [[x] for x in hyp_lines]
+            #metric.update(ref_lines, hyp_lines_lists)
+            #print(metric.compute())
 
 
 if __name__ == "__main__":
