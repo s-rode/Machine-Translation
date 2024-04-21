@@ -4,7 +4,26 @@ from torcheval.metrics.functional import word_error_rate as wer
 from torcheval.metrics.functional import bleu_score as bleu
 
 
-class Metric:
+class FileHandler:
+    @staticmethod
+    def read_file_words(file) -> list[list[str]]:
+        with open(file, 'r', encoding="utf-8") as f:
+            sentences = [line.split() for line in f]
+            f.close()
+        return sentences
+
+
+class Korpus:
+    data = []
+    hyplen = 0
+    reflen = 0
+
+    def __init__(self, ref_file, hyp_file):
+        self.data = list(zip(FileHandler.read_file_words(ref_file), FileHandler.read_file_words(hyp_file)))
+        for (r, h) in self.data:
+            self.hyplen += len(h)
+            self.reflen += len(r)
+
     @staticmethod
     def levenshtein(a, b, shouldprint: bool):
         lenA = len(a) + 1
@@ -54,37 +73,28 @@ class Metric:
 
         return matr[lenA - 1][lenB - 1]
 
-    @staticmethod
-    def per(data: list[tuple[[str], [str]]]):
+    def per(self):
         matches = 0
-        hyplen = 0
-        reflen = 0
-        for (r, h) in data:
-            matches += Metric.ngram_matching(h, r, 1)
-            hyplen += len(h)
-            reflen += len(r)
-        if reflen == 0:
+        for (r, h) in self.data:
+            matches += Korpus.ngram_matching(h, r, 1)
+        if self.reflen == 0:
             raise Exception("Division by zero")
-        return 1 - ((matches - max(0, hyplen - reflen)) / reflen)
+        return 1 - ((matches - max(0, self.hyplen - self.reflen)) / self.reflen)
 
-    @staticmethod
-    def wer(data: list[tuple[[str], [str]]]):
-        refLength = 0
+    def wer(self):
         lvDist = 0
-        for (r, h) in data:
-            lvDist += Metric.levenshtein(r, h, False)
-            refLength += len(r)
-        if refLength == 0:
+        for (r, h) in self.data:
+            lvDist += Korpus.levenshtein(r, h, False)
+        if self.reflen == 0:
             raise Exception("Division by zero")
-        return lvDist / refLength
+        return lvDist / self.reflen
 
-    @staticmethod
-    def ngram_precision(data: list[tuple[[str], [str]]], n: int):
+    def ngram_precision(self, n: int):
         nominator = 0
         denominator = 0
-        for (r, h) in data:
-            nominator += Metric.ngram_matching(h, r, n)
-            denominator += len(Metric.fetch_ngrams(h, n))
+        for (r, h) in self.data:
+            nominator += Korpus.ngram_matching(h, r, n)
+            denominator += len(Korpus.fetch_ngrams(h, n))
         if denominator == 0:
             raise Exception("Division by zero")
         return nominator / denominator
@@ -92,8 +102,8 @@ class Metric:
     @staticmethod
     def ngram_matching(h, r, n):
         count = 0
-        lHyp = Metric.fetch_ngrams(h, n)
-        lRef = Metric.fetch_ngrams(r, n)
+        lHyp = Korpus.fetch_ngrams(h, n)
+        lRef = Korpus.fetch_ngrams(r, n)
         for hyp in lHyp:
             for ref in lRef:
                 if hyp == ref:
@@ -102,13 +112,9 @@ class Metric:
                     break
         return count
 
-    @staticmethod
-    def brevity_penalty(data: list[tuple[[str], [str]]]):
-        c = r = 0
-        for (ref, hyp) in data:
-            c += len(hyp)
-            r += len(ref)
-
+    def brevity_penalty(self):
+        c = self.hyplen
+        r = self.reflen
         if c > r:
             return 1
         elif c:
@@ -123,22 +129,13 @@ class Metric:
             gramlist.append(seq[i:i + n])  # i is max. len(h) - n => we're slicing max. to len(h) - 1
         return gramlist
 
-    @staticmethod
-    def bleu4(data: list[tuple[[str], [str]]]):
-        bp = Metric.brevity_penalty(data)
+    def bleu4(self):
+        bp = self.brevity_penalty()
         s = 0
         for i in range(1, 5):
-            s += (1 / 4) * np.log(Metric.ngram_precision(data, i))
+            s += (1 / 4) * np.log(self.ngram_precision(i))
         return bp * np.exp(s)
 
-
-class FileHandler:
-    @staticmethod
-    def read_file_words(file) -> list[list[str]]:
-        with open(file, 'r', encoding="utf-8") as f:
-            sentences = [line.split() for line in f]
-            f.close()
-        return sentences
 
 def main():
     parser = argparse.ArgumentParser()
@@ -151,20 +148,22 @@ def main():
     ref_lines = FileHandler.read_file_words(args.ref)
     hyp_lines = FileHandler.read_file_words(args.hyp)
 
-    data = list(zip(ref_lines, hyp_lines))
+    korpus = Korpus(args.ref, args.hyp)
 
     match args.metric:
         case "WER":
-            print(Metric.wer(data))
+            print(korpus.wer())
             if args.compare:
-                torchwer = wer([' '.join(sublist) for sublist in hyp_lines], [' '.join(sublist) for sublist in ref_lines])
+                torchwer = wer([' '.join(sublist) for sublist in hyp_lines],
+                               [' '.join(sublist) for sublist in ref_lines])
                 print("Torch WER: ", str(torchwer))
         case "PER":
-            print(Metric.per(data))
+            print(korpus.per())
         case "BLEU":
-            print(Metric.bleu4(data))
+            print(korpus.bleu4())
             if args.compare:
-                torchbleu = bleu([' '.join(sublist) for sublist in hyp_lines], [' '.join(sublist) for sublist in ref_lines])
+                torchbleu = bleu([' '.join(sublist) for sublist in hyp_lines],
+                                 [' '.join(sublist) for sublist in ref_lines])
                 print("Torch BLEU: ", str(torchbleu))
 
 
