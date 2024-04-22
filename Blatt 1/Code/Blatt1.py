@@ -1,7 +1,5 @@
 import numpy as np
 import argparse
-from torcheval.metrics.functional import word_error_rate as wer
-from torcheval.metrics.functional import bleu_score as bleu
 
 
 class FileHandler:
@@ -109,6 +107,9 @@ class Korpus:
                 if hyp == ref:
                     count += 1
                     lRef.remove(ref)
+                    # if we found a match, we delete the reference n-gram from lRef to avoid multiple matches
+                    # breaking the inner loop -> outer loop goes into next iteration and doesn't count the same
+                    # n-gram again
                     break
         return count
 
@@ -142,7 +143,6 @@ def main():
     parser.add_argument("--ref")
     parser.add_argument("--hyp")
     parser.add_argument("--metric")
-    parser.add_argument("--compare", action="store_true")
     args = parser.parse_args()
 
     ref_lines = FileHandler.read_file_words(args.ref)
@@ -153,18 +153,10 @@ def main():
     match args.metric:
         case "WER":
             print(korpus.wer())
-            if args.compare:
-                torchwer = wer([' '.join(sublist) for sublist in hyp_lines],
-                               [' '.join(sublist) for sublist in ref_lines])
-                print("Torch WER: ", str(torchwer))
         case "PER":
             print(korpus.per())
         case "BLEU":
             print(korpus.bleu4())
-            if args.compare:
-                torchbleu = bleu([' '.join(sublist) for sublist in hyp_lines],
-                                 [' '.join(sublist) for sublist in ref_lines])
-                print("Torch BLEU: ", str(torchbleu))
 
 
 if __name__ == "__main__":
