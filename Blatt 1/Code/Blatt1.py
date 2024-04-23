@@ -12,9 +12,9 @@ class FileHandler:
 
 
 class Korpus:
-    data = []
-    hyplen = 0
-    reflen = 0
+    data: list[tuple[list[str], list[str]]] = []
+    hyplen: int = 0
+    reflen: int = 0
 
     def __init__(self, ref_file, hyp_file):
         self.data = list(zip(FileHandler.read_file_words(ref_file), FileHandler.read_file_words(hyp_file)))
@@ -63,7 +63,7 @@ class Korpus:
                     j = j - 1
                     sol.append("match")
                 else:
-                    sol.append(f"substitute {a[i - 1]} with {b[j - 1]}")
+                    sol.append(f"substitute {b[j - 1]} with {a[i - 1]}")
                     i = i - 1
                     j = j - 1
             solStr = "; ".join(sol)
@@ -92,7 +92,7 @@ class Korpus:
         denominator = 0
         for (r, h) in self.data:
             nominator += Korpus.ngram_matching(h, r, n)
-            denominator += len(Korpus.fetch_ngrams(h, n))
+            denominator += len(Korpus.fetch_ngrams(h, n))  # optimizable
         if denominator == 0:
             raise Exception("Division by zero")
         return nominator / denominator
@@ -144,9 +144,6 @@ def main():
     parser.add_argument("--hyp")
     parser.add_argument("--metric")
     args = parser.parse_args()
-
-    ref_lines = FileHandler.read_file_words(args.ref)
-    hyp_lines = FileHandler.read_file_words(args.hyp)
 
     korpus = Korpus(args.ref, args.hyp)
 
