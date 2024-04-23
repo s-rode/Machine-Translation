@@ -12,9 +12,9 @@ class FileHandler:
 
 
 class Korpus:
-    data = []
-    hyplen = 0
-    reflen = 0
+    data: list[tuple[list[str], list[str]]]
+    hyplen: int = 0
+    reflen: int = 0
 
     def __init__(self, ref_file, hyp_file):
         self.data = list(zip(FileHandler.read_file_words(ref_file), FileHandler.read_file_words(hyp_file)))
@@ -23,9 +23,9 @@ class Korpus:
             self.reflen += len(r)
 
     @staticmethod
-    def levenshtein(a, b, shouldprint: bool):
-        lenA = len(a) + 1
-        lenB = len(b) + 1
+    def levenshtein(ref, hyp, shouldprint: bool):
+        lenA = len(ref) + 1
+        lenB = len(hyp) + 1
         if lenA == 0 or lenB == 0:
             print("either a or b are empty")
             return max(lenA, lenB) - 1
@@ -42,7 +42,7 @@ class Korpus:
 
         for i in range(1, lenA):
             for j in range(1, lenB):
-                if a[i - 1] == b[j - 1]:
+                if ref[i - 1] == hyp[j - 1]:
                     matr[i][j] = matr[i - 1][j - 1]
                 else:
                     matr[i][j] = min(matr[i - 1][j - 1], matr[i][j - 1], matr[i - 1][j]) + 1
@@ -51,19 +51,20 @@ class Korpus:
             i = lenA - 1
             j = lenB - 1
             sol = []
+            # reference vertical, hypothesis horizontal
             while (i > 0) or (j > 0):
                 if matr[i - 1][j] == matr[i][j] - 1:
-                    sol.append(f"insert {a[i - 1]}")
+                    sol.append(f"insert {ref[i - 1]}")
                     i = i - 1
                 elif matr[i][j - 1] == matr[i][j] - 1:
-                    sol.append(f"delete {b[j - 1]}")
+                    sol.append(f"delete {hyp[j - 1]}")
                     j = j - 1
                 elif matr[i - 1][j - 1] == matr[i][j]:
                     i = i - 1
                     j = j - 1
                     sol.append("match")
                 else:
-                    sol.append(f"substitute {a[i - 1]} with {b[j - 1]}")
+                    sol.append(f"substitute {hyp[j - 1]} with {ref[i - 1]}")
                     i = i - 1
                     j = j - 1
             solStr = "; ".join(sol)
