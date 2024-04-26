@@ -59,21 +59,63 @@ class BPE:
         # update pairdict
         return self.countTokenPairs()
 
-    def executeBPE(self, iterations: int):
+    def learnBPE(self, iterations: int):
         pairdict = self.countTokenPairs()
         for i in range(iterations):
+            # fortschrittbalken
+            print(f"Progress: {i}/{iterations}")
             pairdict = self.mergeTokens(pairdict)
 
     def getMerges(self) -> list[tuple[str, str]]:
         return self.merges
+
+    def buildAppliedWordDict(self, inputStream: list[str]) -> dict[str, str]:
+        # iterate over words in input and create dictionary with word as key and splitted word as value
+        appliedworddict = {}
+        for word in inputStream:
+            if word not in appliedworddict:
+                appliedworddict[word] = " ".join(list(word)) + "</w>"
+        return appliedworddict
+
+    def applyBPE(self, data) -> list[list[str]]:
+        appliedworddict = self.buildAppliedWordDict(self.createInput(data))
+        # apply merges to dictionary
+        for merge in self.merges:
+            for word in appliedworddict:
+                # replace word containing tokens to merge with word with merged tokens
+                appliedworddict[word] = appliedworddict[word].replace(" ".join(merge), "".join(merge))
+
+        # use @@ as "in word" separator instead of </w>
+        for word in appliedworddict:
+            # replace whitespace with @@
+            appliedworddict[word] = appliedworddict[word].replace(" ", "@@")
+            # remove end of word token </w>
+            appliedworddict[word] = appliedworddict[word].replace("</w>", "")
+
+        # iterate over text and replace words with tokenized words
+        text = fh.read_file_words(data)
+        for i in range(len(text)):
+            for j in range(len(text[i])):
+                text[i][j] = appliedworddict[text[i][j]]
+        return text
+
+    def revertBPEEnconding(self, data: list[list[str]]) -> list[list[str]]:
+        # revert tokenization
+        for i in range(len(data)):
+            for j in range(len(data[i])):
+                # remove @@
+                data[i][j] = data[i][j].replace("@@", "")
+        return data
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, help="Path to input file")
     args = parser.parse_args()
     bpe = BPE(args.input)
-    bpe.executeBPE(10)
-    print(bpe.getMerges())
+    bpe.learnBPE(1000)
+    list = bpe.getMerges()
+    print(list)
+    print(bpe.revertBPEEnconding(bpe.applyBPE(args.input)))
 
 if __name__ == "__main__":
     main()
