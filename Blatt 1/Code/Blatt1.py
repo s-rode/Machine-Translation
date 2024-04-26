@@ -135,7 +135,11 @@ class Korpus:
         bp = self.brevity_penalty()
         s = 0
         for i in range(1, 5):
-            s += (1 / 4) * np.log(self.ngram_precision(i))
+            ngram_precision = self.ngram_precision(i)
+            if ngram_precision == 0:
+                print("ngram_precision is 0")
+                return 0
+            s += (1 / 4) * np.log(ngram_precision)
         return bp * np.exp(s)
 
 
