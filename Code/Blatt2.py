@@ -107,15 +107,65 @@ class BPE:
                 data[i][j] = data[i][j].replace("@@", "")
         return data
 
+class Dictionary:
+    def __init__(self, text: list[list[str]]):
+        self.dict = {}
+        self.dict = self.buildDictdict(text)
+
+    def add(self, key, value):
+        self.dict[key] = value
+
+    def get(self, key):
+        return self.dict[key]
+
+    def contains(self, key):
+        return key in self.dict
+
+    def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
+        # bidirectional map between Strings and indices
+        dictdict = {}
+        counter = 0
+        inputList = self.splitintosubwords(text)
+        for i in range(len(inputList)):
+            for j in range(len(inputList[i])):
+                if inputList[i][j] not in dictdict:
+                    dictdict[inputList[i][j]] = counter
+                    counter += 1
+        return dictdict
+
+    def splitintosubwords(self, text: list[list[str]]) -> list[list[str]]:
+        # split after each @@ while keeping the @@
+        newlist:list[list[str]] = []
+        for i in range(len(text)):
+            newlist.append([])
+            for j in range(len(text[i])):
+                l = text[i][j].split("@@")
+                for k in range(len(l)-1):
+                    newlist[i].append(l[k]+"@@")
+                newlist[i].append(l[(len(l)-1)])
+        return newlist
+
+    def filterInput(self, text: list[list[str]]) -> list[list[str]]:
+        splittedtext = self.splitintosubwords(text)
+        # filter out words that are not in the dictionary
+        for i in range(len(splittedtext)):
+            for j in range(len(splittedtext[i])):
+                if splittedtext[i][j] not in self.dict:
+                    splittedtext[i][j] = "<unk>"
+        return splittedtext
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--training", type=str, help="Path to training file")
     parser.add_argument("--input", type=str, help="Path to input file")
     args = parser.parse_args()
     bpe = BPE(args.input)
     bpe.learnBPE(1000)
     list = bpe.getMerges()
-    print(list)
-    print(bpe.revertBPEEnconding(bpe.applyBPE(args.input)))
+    dictio = Dictionary(bpe.applyBPE(args.training))
+    #print(list)
+    print(dictio.filterInput(bpe.applyBPE(args.input)))
 
 if __name__ == "__main__":
+   #print("@@".join("Hallo@@test".split("@@")))
     main()
