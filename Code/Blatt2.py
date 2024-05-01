@@ -1,12 +1,14 @@
 from Blatt1 import FileHandler as fh
 
 import argparse
+import numpy as np
 
 
 class BPE:
     worddict: dict[str, int]
     # save merges as pairs
     merges: list[tuple[str, str]]
+
     def __init__(self, input):
         self.merges = []
         self.worddict = self.buildDictionary(self.createInput(input))
@@ -46,10 +48,10 @@ class BPE:
                     pairdict[pair] = self.worddict[word]
         return pairdict
 
-    def mergeTokens(self, pairdict: dict[str,str]) -> dict[str, int]:
+    def mergeTokens(self, pairdict: dict[str, str]) -> dict[str, int]:
         # find most frequent pair
         maxpair = max(pairdict, key=pairdict.get)
-        self.merges.append(tuple(maxpair.split())) # todo check if tuple is correct
+        self.merges.append(tuple(maxpair.split()))  # todo check if tuple is correct
         newVocab = {}
         for word in self.worddict:
             newWord = word.replace(maxpair, maxpair.replace(" ", ""))
@@ -107,6 +109,7 @@ class BPE:
                 data[i][j] = data[i][j].replace("@@", "")
         return data
 
+
 class Dictionary:
     def __init__(self, text: list[list[str]]):
         self.dict = {}
@@ -120,6 +123,9 @@ class Dictionary:
 
     def contains(self, key):
         return key in self.dict
+
+    def getDictionary(self):
+        return self.dict
 
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
@@ -135,14 +141,14 @@ class Dictionary:
 
     def splitintosubwords(self, text: list[list[str]]) -> list[list[str]]:
         # split after each @@ while keeping the @@
-        newlist:list[list[str]] = []
+        newlist: list[list[str]] = []
         for i in range(len(text)):
             newlist.append([])
             for j in range(len(text[i])):
                 l = text[i][j].split("@@")
-                for k in range(len(l)-1):
-                    newlist[i].append(l[k]+"@@")
-                newlist[i].append(l[(len(l)-1)])
+                for k in range(len(l) - 1):
+                    newlist[i].append(l[k] + "@@")
+                newlist[i].append(l[(len(l) - 1)])
         return newlist
 
     def filterInput(self, text: list[list[str]]) -> list[list[str]]:
@@ -154,18 +160,84 @@ class Dictionary:
                     splittedtext[i][j] = "<unk>"
         return splittedtext
 
+
+def createBatch(source: list[str],
+                target: list[str],
+                batchsize: int,
+                windowsize: int,
+                voc: Dictionary) -> tuple[np.matrix,np.matrix,np.matrix]:
+
+    vocmapping = voc.getDictionary()
+    S = np.zeros((batchsize, windowsize * 2 + 1))
+    T = np.zeros((batchsize,windowsize))
+    L = np.zeros((batchsize,1))
+
+    alignmentpar = len(source)/len(target)
+
+    for i in range(batchsize):
+        b_i = alignmentpar * i
+        for j in range(2*windowsize+1):
+            if b_i-windowsize+j < 0:
+                S[i,j] = vocmapping["<s>"]
+            elif b_i-windowsize+j >= len(source):
+                S[i,j] = vocmapping["</s>"]
+            else:
+                S[i,j] = vocmapping[source[b_i-windowsize+j]]
+        for j in range(windowsize):
+            if i-windowsize+j < 0:
+                T[i,j] = vocmapping["<s>"]
+            elif i-windowsize+j >= len(target):
+                T[i,j] = vocmapping["</s>"]
+            else:
+                T[i,j] = vocmapping[target[i-windowsize+j]]
+        L[i] = vocmapping[target[i]]
+
+def createBatches(source: list[list[str]], target: list[list[str]], batchsize : int, windowsize : int, voc : Dictionary) -> list[tuple[np.matrix,np.matrix,np.matrix]]:
+    # split full(!) sentences into lists such that each list contains max. of batchsize elements
+    batches = []
+    counter = 0
+    oldcounter = 0
+    listcount = 0
+
+    #todo: if sentence is longer than batch
+    while target:
+        if len(target[listcount]) > batchsize:
+            # split list into two pieces if batchsize is less than list length
+            # when this happens, listcount is 0
+            target1 = [elem in target[listcount] for elem in range(int(len(target[listcount])/2))]
+            target2 = [elem in target[listcount] for elem in range(int(len(target[listcount])/2),len(target[listcount]))]
+            source1 = [elem in source[listcount] for elem in range(int(len(source[listcount])/2))]
+            source2 = [elem in source[listcount] for elem in range(int(len(source[listcount])/2),len(source[listcount]))]
+            target = target[0:listcount] + target1 + target2 + target[listcount+1:]
+            source = source[0:listcount] + source1 + source2 + source[listcount+1:]
+        if counter-1 > batchsize:
+            targetmerged = [elem for sublist in target[0:listcount] for elem in sublist]
+            sourcemerged = [elem for sublist in source[0:listcount] for elem in sublist]
+            batches.append(createBatch(sourcemerged,targetmerged,batchsize,windowsize,voc))
+            target = target[listcount:]
+            source = source[listcount:]
+            listcount = 0
+            counter = 0
+        elif counter-1 <= batchsize:
+            counter += len(target[listcount])
+            listcount += 1
+
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--training", type=str, help="Path to training file")
     parser.add_argument("--input", type=str, help="Path to input file")
     args = parser.parse_args()
     bpe = BPE(args.input)
-    bpe.learnBPE(1000)
+    bpe.learnBPE(100)
     list = bpe.getMerges()
     dictio = Dictionary(bpe.applyBPE(args.training))
-    #print(list)
+    # print(list)
     print(dictio.filterInput(bpe.applyBPE(args.input)))
 
+
 if __name__ == "__main__":
-   #print("@@".join("Hallo@@test".split("@@")))
+    # print("@@".join("Hallo@@test".split("@@")))
     main()
