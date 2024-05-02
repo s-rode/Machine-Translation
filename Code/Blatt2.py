@@ -130,7 +130,9 @@ class Dictionary:
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
         dictdict = {}
-        counter = 0
+        counter = 2
+        dictdict["<s>"] = 0
+        dictdict["</s>"] = 1
         inputList = self.splitintosubwords(text)
         for i in range(len(inputList)):
             for j in range(len(inputList[i])):
@@ -161,81 +163,135 @@ class Dictionary:
         return splittedtext
 
 
-def createBatch(source: list[str],
-                target: list[str],
-                batchsize: int,
-                windowsize: int,
-                voc: Dictionary) -> tuple[np.matrix,np.matrix,np.matrix]:
+def createSmallBatch(source: list[str],
+                     target: list[str],
+                     batchsize: int,
+                     windowsize: int,
+                     voc_source: Dictionary,
+                     voc_target: Dictionary) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    vocmapping_source = voc_source.getDictionary()
+    vocmapping_target = voc_target.getDictionary()
+    S = np.zeros((batchsize, windowsize * 2 + 1), dtype=int)
+    T = np.zeros((batchsize, windowsize), dtype=int)
+    L = np.zeros((batchsize, 1), dtype=int)
 
-    vocmapping = voc.getDictionary()
-    S = np.zeros((batchsize, windowsize * 2 + 1))
-    T = np.zeros((batchsize,windowsize))
-    L = np.zeros((batchsize,1))
-
-    alignmentpar = len(source)/len(target)
+    alignmentpar = len(source) / len(target)
 
     for i in range(batchsize):
-        b_i = alignmentpar * i
-        for j in range(2*windowsize+1):
-            if b_i-windowsize+j < 0:
-                S[i,j] = vocmapping["<s>"]
-            elif b_i-windowsize+j >= len(source):
-                S[i,j] = vocmapping["</s>"]
+        b_i = round(alignmentpar * i)
+        for j in range(2 * windowsize + 1):
+            if b_i - windowsize + j < 0:
+                S[i, j] = vocmapping_source["<s>"]
+            elif b_i - windowsize + j >= len(source):
+                S[i, j] = vocmapping_source["</s>"]
             else:
-                S[i,j] = vocmapping[source[b_i-windowsize+j]]
+                S[i, j] = vocmapping_source[source[b_i - windowsize + j]]
         for j in range(windowsize):
-            if i-windowsize+j < 0:
-                T[i,j] = vocmapping["<s>"]
-            elif i-windowsize+j >= len(target):
-                T[i,j] = vocmapping["</s>"]
+            if i - windowsize + j < 0:
+                T[i, j] = vocmapping_target["<s>"]
+            elif i - windowsize + j >= len(target):
+                T[i, j] = vocmapping_target["</s>"]
             else:
-                T[i,j] = vocmapping[target[i-windowsize+j]]
-        L[i] = vocmapping[target[i]]
+                T[i, j] = vocmapping_target[target[i - windowsize + j]]
+        if i < len(target):
+            L[i] = vocmapping_target[target[i]]
+        else:
+            L[i] = vocmapping_target["</s>"]
+    return S, T, L
 
-def createBatches(source: list[list[str]], target: list[list[str]], batchsize : int, windowsize : int, voc : Dictionary) -> list[tuple[np.matrix,np.matrix,np.matrix]]:
-    # split full(!) sentences into lists such that each list contains max. of batchsize elements
-    batches = []
-    counter = 0
-    oldcounter = 0
-    listcount = 0
 
-    #todo: if sentence is longer than batch
-    while target:
-        if len(target[listcount]) > batchsize:
+def createBatches(source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int, voc_source: Dictionary, voc_target: Dictionary) \
+        -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """ for each sentence pair in the input, create a batch
+         after that we want to merge those small batches into bigger ones"""
+
+    batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    batchcounter = 0
+
+    while len(target) > 0:
+        if len(target[0]) > batchsize:
             # split list into two pieces if batchsize is less than list length
             # when this happens, listcount is 0
-            target1 = [elem in target[listcount] for elem in range(int(len(target[listcount])/2))]
-            target2 = [elem in target[listcount] for elem in range(int(len(target[listcount])/2),len(target[listcount]))]
-            source1 = [elem in source[listcount] for elem in range(int(len(source[listcount])/2))]
-            source2 = [elem in source[listcount] for elem in range(int(len(source[listcount])/2),len(source[listcount]))]
-            target = target[0:listcount] + target1 + target2 + target[listcount+1:]
-            source = source[0:listcount] + source1 + source2 + source[listcount+1:]
-        if counter-1 > batchsize:
-            targetmerged = [elem for sublist in target[0:listcount] for elem in sublist]
-            sourcemerged = [elem for sublist in source[0:listcount] for elem in sublist]
-            batches.append(createBatch(sourcemerged,targetmerged,batchsize,windowsize,voc))
-            target = target[listcount:]
-            source = source[listcount:]
-            listcount = 0
-            counter = 0
-        elif counter-1 <= batchsize:
-            counter += len(target[listcount])
-            listcount += 1
+            target1 = [target[0][c] for c in range(int(len(target[0]) / 2))]
+            target2 = [target[0][c] for c in range(int(len(target[0]) / 2), len(target[0]))]
+            source1 = [source[0][c] for c in range(int(len(source[0]) / 2))]
+            source2 = [source[0][c] for c in range(int(len(source[0]) / 2), len(source[0]))]
+            target = target1 + target2 + target[1:]
+            source = source1 + source2 + source[1:]
+        elif batchcounter + len(target[0]) + 1 > batchsize:
+            batchcounter = 0
+        else:
+            (s_new, t_new, l_new) = createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source, voc_target)
+            # if it doesn't exist yet, create a new batch
+            if batchcounter == 0:
+                batches.append((s_new, t_new, l_new))
+            else:
+                (s, t, l) = batches[-1]
+                s1 = np.concatenate((s, s_new))
+                t1 = np.concatenate((t, t_new))
+                l1 = np.concatenate((l, l_new))
+                batches[-1] = (s1, t1, l1)
+            batchcounter += len(target[0])+1
+            # pop the first element of the lists
+            target = target[1:]
+            source = source[1:]
+    return batches
+
+def matrElemToString(matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
+    mapping = vocab.getDictionary()
+    newmatr = np.zeros((matr.shape[0], matr.shape[1]), dtype=np.dtype('U100'))
+    # for each elem, which is a number, change it to the corresponding word
+    for i in range(len(matr)):
+        for j in range(len(matr[i])):
+            test = list(mapping.keys())[list(mapping.values()).index(matr[i][j])]
+            newmatr[i][j] = test
+    return newmatr
+
+def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+                           vocab_source: Dictionary,
+                           vocab_target: Dictionary) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    newbatches = []
+    for i in range(len(batches)):
+        # progress bar
+        print(f"Progress: {i}/{len(batches)}")
+        (s, t, l) = batches[i]
+        s = matrElemToString(s, vocab_source)
+        t = matrElemToString(t, vocab_target)
+        l = matrElemToString(l, vocab_target)
+        newbatches.append((s, t, l))
+    return newbatches
 
 
 
 
 def main():
     parser = argparse.ArgumentParser()
+    """
     parser.add_argument("--training", type=str, help="Path to training file")
     parser.add_argument("--input", type=str, help="Path to input file")
     args = parser.parse_args()
     bpe = BPE(args.input)
-    bpe.learnBPE(100)
-    list = bpe.getMerges()
-    dictio = Dictionary(bpe.applyBPE(args.training))
-    # print(list)
-    print(dictio.filterInput(bpe.applyBPE(args.input)))
+    bpe.learnBPE(1000)
+    dictio = Dictionary(bpe.applyBPE(args.training))"""
+
+    parser.add_argument("--englisch", type=str, help="Path to training file")
+    parser.add_argument("--deutsch", type=str, help="Path to input file")
+    args = parser.parse_args()
+    bpe_de = BPE(args.deutsch)
+    bpe_de.learnBPE(2000)
+    dictio_de = Dictionary(bpe_de.applyBPE(args.deutsch))
+    bpe_en = BPE(args.englisch)
+    bpe_en.learnBPE(2000)
+    dictio_en = Dictionary(bpe_en.applyBPE(args.englisch))
+    # create batches
+    batches = createBatches(dictio_en.filterInput(bpe_en.applyBPE(args.englisch)),
+                            dictio_de.filterInput(bpe_de.applyBPE(args.deutsch)),
+                            200, 5, dictio_en, dictio_de)
+    print(getBatchesWithStrings(batches, dictio_en, dictio_de))
+
+
+
+
 
 
 if __name__ == "__main__":
