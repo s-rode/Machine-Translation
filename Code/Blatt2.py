@@ -59,6 +59,10 @@ class BPE:
         return pairdict
 
     def mergeTokens(self, pairdict: dict[str, str]) -> dict[str, int]:
+        # dictionary might be empty, if we have no pairs left (i.e. all tokens are merged)
+        if not pairdict:
+            return self.countTokenPairs()
+
         # find most frequent pair
         maxpair = max(pairdict, key=pairdict.get)
         self.merges.append(tuple(maxpair.split()))  # todo check if tuple is correct
