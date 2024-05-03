@@ -2,6 +2,17 @@ from Blatt1 import FileHandler as fh
 
 import argparse
 import numpy as np
+import matplotlib.pyplot as plt
+
+
+class FileHandler:
+    @staticmethod
+    def createFlatInput(data) -> list[str]:
+        words: list[list[str]] = fh.read_file_words(data)
+        return [item for sublist in words for item in sublist]
+
+    def flattenList(data: list[list[str]]) -> list[str]:
+        return [item for sublist in data for item in sublist]
 
 
 class BPE:
@@ -9,14 +20,13 @@ class BPE:
     # save merges as pairs
     merges: list[tuple[str, str]]
 
-    def __init__(self, input):
+    def __init__(self, inputlist: list[str]):
         self.merges = []
-        self.worddict = self.buildDictionary(self.createInput(input))
+        self.worddict = self.buildDictionary(inputlist)
         self.worddict = self.splitDictionary(self.worddict)
 
-    def createInput(self, data) -> list[str]:
-        words: list[list[str]] = fh.read_file_words(data)
-        return [item for sublist in words for item in sublist]
+    def getDict(self):
+        return self.worddict
 
     def buildDictionary(self, text: list[str]) -> dict[str, int]:
         dict = {}
@@ -79,8 +89,8 @@ class BPE:
                 appliedworddict[word] = " ".join(list(word)) + "</w>"
         return appliedworddict
 
-    def applyBPE(self, data) -> list[list[str]]:
-        appliedworddict = self.buildAppliedWordDict(self.createInput(data))
+    def applyBPE(self, data: list[list[str]]) -> list[list[str]]:
+        appliedworddict = self.buildAppliedWordDict(FileHandler.flattenList(data))
         # apply merges to dictionary
         for merge in self.merges:
             for word in appliedworddict:
@@ -95,7 +105,7 @@ class BPE:
             appliedworddict[word] = appliedworddict[word].replace("</w>", "")
 
         # iterate over text and replace words with tokenized words
-        text = fh.read_file_words(data)
+        text = data
         for i in range(len(text)):
             for j in range(len(text[i])):
                 text[i][j] = appliedworddict[text[i][j]]
@@ -200,7 +210,8 @@ def createSmallBatch(source: list[str],
     return S, T, L
 
 
-def createBatches(source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int, voc_source: Dictionary, voc_target: Dictionary) \
+def createBatches(source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int,
+                  voc_source: Dictionary, voc_target: Dictionary) \
         -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """ for each sentence pair in the input, create a batch
          after that we want to merge those small batches into bigger ones"""
@@ -221,7 +232,8 @@ def createBatches(source: list[list[str]], target: list[list[str]], batchsize: i
         elif batchcounter + len(target[0]) + 1 > batchsize:
             batchcounter = 0
         else:
-            (s_new, t_new, l_new) = createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source, voc_target)
+            (s_new, t_new, l_new) = createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
+                                                     voc_target)
             # if it doesn't exist yet, create a new batch
             if batchcounter == 0:
                 batches.append((s_new, t_new, l_new))
@@ -231,11 +243,12 @@ def createBatches(source: list[list[str]], target: list[list[str]], batchsize: i
                 t1 = np.concatenate((t, t_new))
                 l1 = np.concatenate((l, l_new))
                 batches[-1] = (s1, t1, l1)
-            batchcounter += len(target[0])+1
+            batchcounter += len(target[0]) + 1
             # pop the first element of the lists
             target = target[1:]
             source = source[1:]
     return batches
+
 
 def matrElemToString(matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
     mapping = vocab.getDictionary()
@@ -247,9 +260,10 @@ def matrElemToString(matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
             newmatr[i][j] = test
     return newmatr
 
+
 def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
-                           vocab_source: Dictionary,
-                           vocab_target: Dictionary) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+                          vocab_source: Dictionary,
+                          vocab_target: Dictionary) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     newbatches = []
     for i in range(len(batches)):
         # progress bar
@@ -262,6 +276,72 @@ def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray
     return newbatches
 
 
+def analyzeBPE(source: str, target: str):
+    """"Trainieren Sie diese Operationen zunächst auf den Trainingsdaten Ausgangs- und Ziel-
+sprache getrennt und anschließend auf der Vereinigung der Trainingsdaten (getrenntes und
+vereinte BPE). Wie verändert sich die Anzahl der verschiedenen Wörter (und damit die
+Gröÿe des Vokabulars) durch das Anwenden der Subwort-Zerlegung mit 1k, 5k oder 15k
+Operationen? Stellen Sie Ihre Ergebnisse übersichtlich dar.
+"""
+    # input List[List]]
+    source_input = fh.read_file_words(source)
+    target_input = fh.read_file_words(target)
+    combined_input = source_input + target_input
+
+    # input List[str]
+    source_flat = FileHandler.flattenList(source_input)
+    target_flat = FileHandler.flattenList(target_input)
+    combined_flat = FileHandler.flattenList(combined_input)
+
+    # save results in a list to plot later
+    results = []
+
+    for i in [1000, 5000, 15000]:
+        # training on source language
+        bpe_source = BPE(source_flat)
+        bpe_source.learnBPE(i)
+        dictio_source = Dictionary(bpe_source.applyBPE(source_input))
+        # training on target language
+        bpe_target = BPE(target_flat)
+        bpe_target.learnBPE(i)
+        dictio_target = Dictionary(bpe_target.applyBPE(target_input))
+        # training on combined language
+        # first create combined list
+        bpe_combined = BPE(combined_flat)
+        bpe_combined.learnBPE(i)
+        dictio_combined = Dictionary(bpe_combined.applyBPE(combined_input))
+        # save results
+        results.append((len(dictio_source.getDictionary())-2, len(dictio_target.getDictionary())-2, len(dictio_combined.getDictionary())-2))
+
+
+    # Define the number of BPE operations
+    bpe_operations = [1000, 5000, 15000]
+
+    # Define the results
+    source_results = [results[0][0], results[1][0], results[2][0]]
+    target_results = [results[0][1], results[1][1], results[2][1]]
+    combined_results = [results[0][2], results[1][2], results[2][2]]
+
+    # Define the bar width
+    bar_width = 0.25
+
+    # Define the position of the bars on the x-axis
+    r1 = np.arange(len(source_results))
+    r2 = [x + bar_width for x in r1]
+    r3 = [x + bar_width for x in r2]
+
+    # Create the bars
+    plt.bar(r1, source_results, color='b', width=bar_width, edgecolor='grey', label='Source')
+    plt.bar(r2, target_results, color='g', width=bar_width, edgecolor='grey', label='Target')
+    plt.bar(r3, combined_results, color='r', width=bar_width, edgecolor='grey', label='Combined')
+
+    # Add xticks on the middle of the group bars
+    plt.xlabel('Number of BPE operations', fontweight='bold')
+    plt.xticks([r + bar_width for r in range(len(source_results))], bpe_operations)
+
+    # Create legend & Show graphic
+    plt.legend()
+    plt.show()
 
 
 def main():
@@ -274,13 +354,18 @@ def main():
     bpe.learnBPE(1000)
     dictio = Dictionary(bpe.applyBPE(args.training))"""
 
+    """test batches:
+
     parser.add_argument("--englisch", type=str, help="Path to training file")
     parser.add_argument("--deutsch", type=str, help="Path to input file")
     args = parser.parse_args()
-    bpe_de = BPE(args.deutsch)
-    bpe_de.learnBPE(2000)
+    bpe_de = BPE(FileHandler.createFlatInput(args.deutsch))
+    bpe_de.learnBPE(1000)
+    print(bpe_de.getDict())
     dictio_de = Dictionary(bpe_de.applyBPE(args.deutsch))
-    bpe_en = BPE(args.englisch)
+    print(dictio_de.getDictionary())
+    bpe_en = BPE(FileHandler.createFlatInput(args.englisch))
+
     bpe_en.learnBPE(2000)
     dictio_en = Dictionary(bpe_en.applyBPE(args.englisch))
     # create batches
@@ -288,10 +373,13 @@ def main():
                             dictio_de.filterInput(bpe_de.applyBPE(args.deutsch)),
                             200, 5, dictio_en, dictio_de)
     print(getBatchesWithStrings(batches, dictio_en, dictio_de))
+    """
 
-
-
-
+    # analyze BPE
+    parser.add_argument("--source", type=str, help="Path to source file")
+    parser.add_argument("--target", type=str, help="Path to target file")
+    args = parser.parse_args()
+    analyzeBPE(args.source, args.target)
 
 
 if __name__ == "__main__":
