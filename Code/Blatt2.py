@@ -234,6 +234,7 @@ def createBatches(source: list[list[str]], target: list[list[str]], batchsize: i
             target = target1 + target2 + target[1:]
             source = source1 + source2 + source[1:]
         elif batchcounter + len(target[0]) + 1 > batchsize:
+            #todo: fill up the rest of the batch with padding
             batchcounter = 0
         else:
             (s_new, t_new, l_new) = createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
