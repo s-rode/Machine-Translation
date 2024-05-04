@@ -109,7 +109,7 @@ class BPE:
             appliedworddict[word] = appliedworddict[word].replace("</w>", "")
 
         # iterate over text and replace words with tokenized words
-        text = data
+        text = [sublist.copy() for sublist in data]
         for i in range(len(text)):
             for j in range(len(text[i])):
                 text[i][j] = appliedworddict[text[i][j]]
@@ -281,12 +281,6 @@ def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray
 
 
 def analyzeBPE(source: str, target: str):
-    """"Trainieren Sie diese Operationen zunächst auf den Trainingsdaten Ausgangs- und Ziel-
-sprache getrennt und anschließend auf der Vereinigung der Trainingsdaten (getrenntes und
-vereinte BPE). Wie verändert sich die Anzahl der verschiedenen Wörter (und damit die
-Gröÿe des Vokabulars) durch das Anwenden der Subwort-Zerlegung mit 1k, 5k oder 15k
-Operationen? Stellen Sie Ihre Ergebnisse übersichtlich dar.
-"""
     # input List[List]]
     source_input = fh.read_file_words(source)
     target_input = fh.read_file_words(target)
@@ -310,7 +304,6 @@ Operationen? Stellen Sie Ihre Ergebnisse übersichtlich dar.
         bpe_target.learnBPE(i)
         dictio_target = Dictionary(bpe_target.applyBPE(target_input))
         # training on combined language
-        # first create combined list
         bpe_combined = BPE(combined_flat)
         bpe_combined.learnBPE(i)
         dictio_combined = Dictionary(bpe_combined.applyBPE(combined_input))
