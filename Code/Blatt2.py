@@ -14,6 +14,14 @@ class FileHandler:
     def flattenList(data: list[list[str]]) -> list[str]:
         return [item for sublist in data for item in sublist]
 
+    def saveBatches(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]], path: str, max_digits: int = 5):
+        with open(path, "wb") as f:
+            for (s, t, l) in batches:
+                for i in range(len(s)):
+                    combinedrow = ' '.join('{{:<{}}}'.format(max_digits).format(item) for item in s[i]) + '\t' + '|' + '\t' + ' '.join('{{:<{}}}'.format(max_digits).format(item) for item in t[i]) + '\t' + '|' + '\t' + ' '.join('{{:<{}}}'.format(max_digits).format(item) for item in l[i]) + '\n'
+                    f.write(combinedrow.encode())
+                f.write("\n\n\n".encode())
+
 
 class BPE:
     worddict: dict[str, int]
@@ -109,7 +117,7 @@ class BPE:
             appliedworddict[word] = appliedworddict[word].replace("</w>", "")
 
         # iterate over text and replace words with tokenized words
-        text = [sublist.copy() for sublist in data]
+        text = [sublist[:] for sublist in data]
         for i in range(len(text)):
             for j in range(len(text[i])):
                 text[i][j] = appliedworddict[text[i][j]]
@@ -183,6 +191,7 @@ def createSmallBatch(source: list[str],
                      windowsize: int,
                      voc_source: Dictionary,
                      voc_target: Dictionary) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """create a batch of one sentence pair"""
     vocmapping_source = voc_source.getDictionary()
     vocmapping_target = voc_target.getDictionary()
     S = np.zeros((batchsize, windowsize * 2 + 1), dtype=int)
@@ -214,6 +223,19 @@ def createSmallBatch(source: list[str],
     return S, T, L
 
 
+def fillUpwithPadding(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]], tofillup: int, windowsize: int,
+                      voc_source: Dictionary, voc_target: Dictionary):
+    """fill up the last batch with padding to reach the desired batchsize"""
+    s_pad = np.full((tofillup, windowsize * 2 + 1), voc_source.getDictionary()["</s>"])
+    t_pad = np.full((tofillup, windowsize), voc_target.getDictionary()["</s>"])
+    l_pad = np.full((tofillup, 1), voc_target.getDictionary()["</s>"])
+    (s, t, l) = batches[-1]
+    s1 = np.concatenate((s, s_pad))
+    t1 = np.concatenate((t, t_pad))
+    l1 = np.concatenate((l, l_pad))
+    batches[-1] = (s1, t1, l1)
+
+
 def createBatches(source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int,
                   voc_source: Dictionary, voc_target: Dictionary) \
         -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -224,17 +246,18 @@ def createBatches(source: list[list[str]], target: list[list[str]], batchsize: i
     batchcounter = 0
 
     while len(target) > 0:
-        if len(target[0]) > batchsize:
+        if len(target[0]) + 1 > batchsize:
             # split list into two pieces if batchsize is less than list length
             # when this happens, listcount is 0
             target1 = [target[0][c] for c in range(int(len(target[0]) / 2))]
             target2 = [target[0][c] for c in range(int(len(target[0]) / 2), len(target[0]))]
             source1 = [source[0][c] for c in range(int(len(source[0]) / 2))]
             source2 = [source[0][c] for c in range(int(len(source[0]) / 2), len(source[0]))]
-            target = target1 + target2 + target[1:]
-            source = source1 + source2 + source[1:]
+            target = [target1] + [target2] + target[1:]
+            source = [source1] + [source2] + source[1:]
         elif batchcounter + len(target[0]) + 1 > batchsize:
-            #todo: fill up the rest of the batch with padding
+            # fill up the rest of the batch with padding
+            fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
             batchcounter = 0
         else:
             (s_new, t_new, l_new) = createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
@@ -252,6 +275,9 @@ def createBatches(source: list[list[str]], target: list[list[str]], batchsize: i
             # pop the first element of the lists
             target = target[1:]
             source = source[1:]
+
+    # fill up the last batch with padding
+    fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
     return batches
 
 
@@ -261,7 +287,7 @@ def matrElemToString(matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
     # for each elem, which is a number, change it to the corresponding word
     for i in range(len(matr)):
         for j in range(len(matr[i])):
-            test = list(mapping.keys())[list(mapping.values()).index(matr[i][j])]
+            test = list(mapping.keys())[list(mapping.values()).index(matr[i][j])]  # super slow
             newmatr[i][j] = test
     return newmatr
 
@@ -309,8 +335,8 @@ def analyzeBPE(source: str, target: str):
         bpe_combined.learnBPE(i)
         dictio_combined = Dictionary(bpe_combined.applyBPE(combined_input))
         # save results
-        results.append((len(dictio_source.getDictionary())-2, len(dictio_target.getDictionary())-2, len(dictio_combined.getDictionary())-2))
-
+        results.append((len(dictio_source.getDictionary()) - 2, len(dictio_target.getDictionary()) - 2,
+                        len(dictio_combined.getDictionary()) - 2))
 
     # Define the number of BPE operations
     bpe_operations = [1000, 5000, 15000]
@@ -352,32 +378,52 @@ def main():
     bpe.learnBPE(1000)
     dictio = Dictionary(bpe.applyBPE(args.training))"""
 
-    """test batches:
-
     parser.add_argument("--englisch", type=str, help="Path to training file")
     parser.add_argument("--deutsch", type=str, help="Path to input file")
+    parser.add_argument("--output_int", type=str, help="Path to output file")
+    parser.add_argument("--output_str", type=str, help="Path to output file")
     args = parser.parse_args()
-    bpe_de = BPE(FileHandler.createFlatInput(args.deutsch))
+
+    source_input = fh.read_file_words(args.deutsch)
+    target_input = fh.read_file_words(args.englisch)
+
+    # input List[str]
+    source_flat = FileHandler.flattenList(source_input)
+    target_flat = FileHandler.flattenList(target_input)
+
+    """bpe_de = BPE(source_flat)
     bpe_de.learnBPE(1000)
     print(bpe_de.getDict())
-    dictio_de = Dictionary(bpe_de.applyBPE(args.deutsch))
+    dictio_de = Dictionary(bpe_de.applyBPE(source_input))
     print(dictio_de.getDictionary())
-    bpe_en = BPE(FileHandler.createFlatInput(args.englisch))
+    bpe_en = BPE(target_flat)
 
     bpe_en.learnBPE(2000)
-    dictio_en = Dictionary(bpe_en.applyBPE(args.englisch))
+    dictio_en = Dictionary(bpe_en.applyBPE(target_input))
     # create batches
-    batches = createBatches(dictio_en.filterInput(bpe_en.applyBPE(args.englisch)),
-                            dictio_de.filterInput(bpe_de.applyBPE(args.deutsch)),
+    batches = createBatches(dictio_en.filterInput(bpe_en.applyBPE(target_input)),
+                            dictio_de.filterInput(bpe_de.applyBPE(source_input)),
                             200, 5, dictio_en, dictio_de)
-    print(getBatchesWithStrings(batches, dictio_en, dictio_de))
+    for (s, t, l) in batches:
+        print(s.shape)
+        print(t.shape)
+        print(l.shape)
+    # save batches
+    FileHandler.saveBatches(batches, args.output)
     """
+    dictio_de = Dictionary(source_input[1100:1200])
+    dictio_en = Dictionary(target_input[1100:1200])
+    batches = createBatches(source_input[1100:1200], target_input[1100:1200], 20, 5, dictio_de, dictio_en)
+    str_batches = getBatchesWithStrings(batches, dictio_de, dictio_en)
+    FileHandler.saveBatches(batches, args.output_int,4)
+    FileHandler.saveBatches(str_batches, args.output_str,20)
 
-    # analyze BPE
+
+    """# analyze BPE
     parser.add_argument("--source", type=str, help="Path to source file")
     parser.add_argument("--target", type=str, help="Path to target file")
     args = parser.parse_args()
-    analyzeBPE(args.source, args.target)
+    analyzeBPE(args.source, args.target)"""
 
 
 if __name__ == "__main__":
