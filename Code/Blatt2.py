@@ -88,9 +88,9 @@ class BPE:
             newWord = word
             index = word.find(maxpair)
             while index != -1:
-                if index == 0 or word[index - 1] == " ":
-                    if index + len(maxpair) == len(word) or word[index + len(maxpair)] == " ":
-                        newWord = newWord[:index] + maxpair.replace(" ", "") + newWord[index + len(maxpair)-1:]
+                if index == 0 or newWord[index - 1] == " ":
+                    if index + len(maxpair) == len(newWord) or newWord[index + len(maxpair)] == " ":
+                        newWord = newWord[:index] + maxpair.replace(" ", "") + newWord[index + len(maxpair):]
                         #newWord[index:index + len(maxpair)] = maxpair.replace(" ", "")
                         #newWord = word.replace(maxpair, maxpair.replace(" ", ""),iterations)
                         index = newWord.find(maxpair, index+len(maxpair)-1)
@@ -109,9 +109,9 @@ class BPE:
     def learnBPE(self, iterations: int):
         pairdict = self.countTokenPairs()
         for i in range(iterations):
-            # fortschrittbalken
             print(f"Progress: {i}/{iterations}")
             pairdict = self.mergeTokens(pairdict)
+        #print(f"Finished learning BPE with {iterations} iterations")
 
     def getMerges(self) -> list[tuple[str, str]]:
         return self.merges
@@ -146,7 +146,7 @@ class BPE:
                     if index == 0 or newWord[index - 1] == " ":
                         if index + len(search) == len(newWord) or newWord[index + len(search)] == " ":
                             #newWord[index:index + len(search)] = merge[0] + merge[1]
-                            newWord = newWord[:index] + merge[0] + merge[1] + newWord[index + len(search)-1:]
+                            newWord = newWord[:index] + merge[0] + merge[1] + newWord[index + len(search):]
                             index = newWord.find(search, index + len(search) - 1)
                         else:
                             index = newWord.find(search, index + len(search))
@@ -154,6 +154,7 @@ class BPE:
                         index = newWord.find(search, index+len(search)) # -1 because we replaced the string
 
                 appliedworddict[word] = newWord
+        #print(appliedworddict)
         # use @@ as "in word" separator instead of </w>
         for word in appliedworddict:
             # replace whitespace with @@
@@ -356,13 +357,21 @@ def testBPE(source: str):
     source_input = fh.read_file_words(source)
     source_input_new = source_input
     source_flat = FileHandler.flattenList(source_input_new)
+    """
     for i in range(500):
         bpe = BPE(source_flat)
         bpe.learnBPE(i)
         applied = bpe.applyBPE(source_input_new)
         dictio = Dictionary(applied)
-        print(len(dictio.getDictionary()))
+        print(len(dictio.getDictionary()))"""
 
+    bpe = BPE(source_flat)
+    bpe.learnBPE(15000)
+    print(bpe.worddict)
+    applied = bpe.applyBPE(source_input_new)
+    dictio = Dictionary(applied)
+    print(dictio.getDictionary())
+    print(len(dictio.getDictionary()))
 
 
 def analyzeBPE(source: str, target: str):
@@ -379,7 +388,7 @@ def analyzeBPE(source: str, target: str):
     # save results in a list to plot later
     results = []
 
-    for i in [1,500, 5000, 15000]:
+    for i in [1000, 5000, 15000]:
         # training on source language
         bpe_source = BPE(source_flat)
         bpe_source.learnBPE(i)
@@ -413,9 +422,13 @@ def analyzeBPE(source: str, target: str):
     r3 = [x + bar_width for x in r2]
 
     # Create the bars
-    plt.bar(r1, source_results, color='b', width=bar_width, edgecolor='grey', label='Source')
-    plt.bar(r2, target_results, color='g', width=bar_width, edgecolor='grey', label='Target')
-    plt.bar(r3, combined_results, color='r', width=bar_width, edgecolor='grey', label='Combined')
+    bars1 = plt.bar(r1, source_results, color='b', width=bar_width, edgecolor='grey', label='Source')
+    bars2 = plt.bar(r2, target_results, color='g', width=bar_width, edgecolor='grey', label='Target')
+    bars3 = plt.bar(r3, combined_results, color='r', width=bar_width, edgecolor='grey', label='Combined')
+
+    add_value_labels(bars1)
+    add_value_labels(bars2)
+    add_value_labels(bars3)
 
     # Add xticks on the middle of the group bars
     plt.xlabel('Number of BPE operations', fontweight='bold')
@@ -424,6 +437,13 @@ def analyzeBPE(source: str, target: str):
     # Create legend & Show graphic
     plt.legend()
     plt.show()
+
+def add_value_labels(bars):
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width() / 2, height,
+                 '{0:.0f}'.format(height), ha='center', va='bottom')
+
 
 
 def main():
@@ -485,8 +505,8 @@ def main():
     parser.add_argument("--source", type=str, help="Path to source file")
     parser.add_argument("--target", type=str, help="Path to target file")
     args = parser.parse_args()
-    analyzeBPE(args.source, args.target)
-    #testBPE(args.source)
+    #analyzeBPE(args.source, args.target)
+    testBPE(args.target)
 
 
 
