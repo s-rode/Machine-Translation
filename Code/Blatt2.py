@@ -213,7 +213,8 @@ class Dictionary:
 
 
 class Batch:
-    def createSmallBatch(self, source: list[str],
+    @staticmethod
+    def createSmallBatch(source: list[str],
                          target: list[str],
                          batchsize: int,
                          windowsize: int,
@@ -250,7 +251,9 @@ class Batch:
                 L[i] = vocmapping_target["</s>"]
         return S, T, L
 
-    def fillUpwithPadding(self, batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]], tofillup: int,
+
+    @staticmethod
+    def fillUpwithPadding(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]], tofillup: int,
                           windowsize: int,
                           voc_source: Dictionary, voc_target: Dictionary):
         """fill up the last batch with padding to reach the desired batchsize"""
@@ -263,7 +266,8 @@ class Batch:
         l1 = np.concatenate((l, l_pad))
         batches[-1] = (s1, t1, l1)
 
-    def createBatches(self, source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int,
+    @staticmethod
+    def createBatches(source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int,
                       voc_source: Dictionary, voc_target: Dictionary) \
             -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """ for each sentence pair in the input, create a batch
@@ -284,10 +288,10 @@ class Batch:
                 source = [source1] + [source2] + source[1:]
             elif batchcounter + len(target[0]) + 1 > batchsize:
                 # fill up the rest of the batch with padding
-                self.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
+                Batch.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
                 batchcounter = 0
             else:
-                (s_new, t_new, l_new) = self.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source, voc_target)
+                (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source, voc_target)
                 # if it doesn't exist yet, create a new batch
                 if batchcounter == 0:
                     batches.append((s_new, t_new, l_new))
@@ -303,10 +307,11 @@ class Batch:
                 source = source[1:]
 
         # fill up the last batch with padding
-        self.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
+        Batch.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
         return batches
 
-    def matrElemToString(self, matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
+    @staticmethod
+    def matrElemToString(matr: np.ndarray, vocab: Dictionary) -> np.ndarray:
         mapping = vocab.getDictionary()
         newmatr = np.zeros((matr.shape[0], matr.shape[1]), dtype=np.dtype('U100'))
         # for each elem, which is a number, change it to the corresponding word
@@ -316,7 +321,8 @@ class Batch:
                 newmatr[i][j] = test
         return newmatr
 
-    def getBatchesWithStrings(self, batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    @staticmethod
+    def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
                               vocab_source: Dictionary,
                               vocab_target: Dictionary) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         newbatches = []
@@ -324,9 +330,9 @@ class Batch:
             # progress bar
             print(f"Progress: {i}/{len(batches)}")
             (s, t, l) = batches[i]
-            s = self.matrElemToString(s, vocab_source)
-            t = self.matrElemToString(t, vocab_target)
-            l = self.matrElemToString(l, vocab_target)
+            s = Batch.matrElemToString(s, vocab_source)
+            t = Batch.matrElemToString(t, vocab_target)
+            l = Batch.matrElemToString(l, vocab_target)
             newbatches.append((s, t, l))
         return newbatches
 
@@ -435,7 +441,7 @@ class Analysis:
 
 
 def main():
-    Analysis.analyzeBPEWrapper()
+    Analysis.printBatches()
 
 
 if __name__ == "__main__":
