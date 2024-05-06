@@ -65,41 +65,32 @@ class BPE:
                 else:
                     pairdict[pair] = self.worddict[word]
         return pairdict
+    def substitutePair(self, word: str, pair: str) -> str:
+        newWord = word
+        index = word.find(pair)
+        while index != -1:
+            if index == 0 or newWord[index - 1] == " ":
+                if index + len(pair) == len(newWord) or newWord[index + len(pair)] == " ":
+                    newWord = newWord[:index] + pair.replace(" ", "") + newWord[index + len(pair):]
+                    index = newWord.find(pair, index + len(pair) - 1)
+                else:
+                    index = newWord.find(pair, index + 1)
+            else:
+                index = newWord.find(pair, index + 1)  # -1 because we replaced the string
+        return newWord
 
     def mergeTokens(self, pairdict: dict[str, str]) -> dict[str, int]:
         # dictionary might be empty, if we have no pairs left (i.e. all tokens are merged)
         if not pairdict:
             return self.countTokenPairs()
-
         # find most frequent pair
-        maxpair = max(pairdict, key=pairdict.get)
+        maxpair = max(pairdict, key= lambda k: (pairdict[k], k))
         #print(f"merge: {maxpair}")
         self.merges.append(tuple(maxpair.split()))
         newVocab = {}
         for word in self.worddict:
             # replace most frequent pair with merged pair but (!) differentiate between </w> and no </w>
-            """
-            newWord = re.sub(r'^' + re.escape(maxpair) + r'(?=\s|$)', maxpair.replace(" ", ""),
-                             word)  # for start of the string
-            newWord = re.sub(r'(?<=\s)' + re.escape(maxpair) + r'(?=\s|$)', maxpair.replace(" ", ""),
-                             newWord)  # for surrounded by whitespacesy whitespaces
-            """
-            #without regex:
-            newWord = word
-            index = word.find(maxpair)
-            while index != -1:
-                if index == 0 or newWord[index - 1] == " ":
-                    if index + len(maxpair) == len(newWord) or newWord[index + len(maxpair)] == " ":
-                        newWord = newWord[:index] + maxpair.replace(" ", "") + newWord[index + len(maxpair):]
-                        #newWord[index:index + len(maxpair)] = maxpair.replace(" ", "")
-                        #newWord = word.replace(maxpair, maxpair.replace(" ", ""),iterations)
-                        index = newWord.find(maxpair, index+len(maxpair)-1)
-                        #print(f"replaced {word} with {newWord}")
-                    else:
-                        index = newWord.find(maxpair, index + len(maxpair))
-                else:
-                    index = newWord.find(maxpair, index+len(maxpair)) # -1 because we replaced the string
-
+            newWord = self.substitutePair(word, maxpair)
             newVocab[newWord] = self.worddict[word]
 
         self.worddict = newVocab
@@ -130,7 +121,6 @@ class BPE:
         for merge in self.merges:
             for word in appliedworddict:
                 # replace word containing tokens to merge with word with merged tokens
-                #appliedworddict[word] = appliedworddict[word].replace(" ".join(merge), "".join(merge))
                 """
                 newWord = re.sub(r'^' + re.escape(" ".join(merge)) + r'(?=\s|$)', "".join(merge),
                                  appliedworddict[word])  # for start of the string
@@ -138,23 +128,9 @@ class BPE:
                                  newWord)  # for surrounded by whitespaces
 
                 """
-                #without regex:
-                newWord = appliedworddict[word]
-                search = " ".join(merge)
-                index = newWord.find(search)
-                while index != -1:
-                    if index == 0 or newWord[index - 1] == " ":
-                        if index + len(search) == len(newWord) or newWord[index + len(search)] == " ":
-                            #newWord[index:index + len(search)] = merge[0] + merge[1]
-                            newWord = newWord[:index] + merge[0] + merge[1] + newWord[index + len(search):]
-                            index = newWord.find(search, index + len(search) - 1)
-                        else:
-                            index = newWord.find(search, index + len(search))
-                    else:
-                        index = newWord.find(search, index+len(search)) # -1 because we replaced the string
-
+                # without regex
+                newWord = self.substitutePair(appliedworddict[word], " ".join(merge))
                 appliedworddict[word] = newWord
-        #print(appliedworddict)
         # use @@ as "in word" separator instead of </w>
         for word in appliedworddict:
             # replace whitespace with @@
@@ -198,9 +174,10 @@ class Dictionary:
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
         dictdict = {}
-        counter = 2
+        counter = 3
         dictdict["<s>"] = 0
         dictdict["</s>"] = 1
+        dictdict["<unk>"] = 2
         inputList = self.splitintosubwords(text)
         for i in range(len(inputList)):
             for j in range(len(inputList[i])):
@@ -372,7 +349,7 @@ def testBPE(source: str):
     dictio = Dictionary(applied)
     print(dictio.getDictionary())
     print(len(dictio.getDictionary()))
-
+    print(bpe.merges)
 
 def analyzeBPE(source: str, target: str):
     # input List[List]]
@@ -402,8 +379,8 @@ def analyzeBPE(source: str, target: str):
         bpe_combined.learnBPE(i)
         dictio_combined = Dictionary(bpe_combined.applyBPE(combined_input))
         # save results
-        results.append((len(dictio_source.getDictionary()) - 2, len(dictio_target.getDictionary()) - 2,
-                        len(dictio_combined.getDictionary()) - 2))
+        results.append((len(dictio_source.getDictionary()) - 3, len(dictio_target.getDictionary()) - 3,
+                        len(dictio_combined.getDictionary()) - 3))
 
     # Define the number of BPE operations
     bpe_operations = [1000, 5000, 15000]
@@ -506,7 +483,7 @@ def main():
     parser.add_argument("--target", type=str, help="Path to target file")
     args = parser.parse_args()
     #analyzeBPE(args.source, args.target)
-    testBPE(args.target)
+    testBPE(args.source)
 
 
 
