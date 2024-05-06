@@ -73,10 +73,33 @@ class BPE:
 
         # find most frequent pair
         maxpair = max(pairdict, key=pairdict.get)
-        self.merges.append(tuple(maxpair.split()))  # todo check if tuple is correct
+        #print(f"merge: {maxpair}")
+        self.merges.append(tuple(maxpair.split()))
         newVocab = {}
         for word in self.worddict:
-            newWord = word.replace(maxpair, maxpair.replace(" ", ""))
+            # replace most frequent pair with merged pair but (!) differentiate between </w> and no </w>
+            """
+            newWord = re.sub(r'^' + re.escape(maxpair) + r'(?=\s|$)', maxpair.replace(" ", ""),
+                             word)  # for start of the string
+            newWord = re.sub(r'(?<=\s)' + re.escape(maxpair) + r'(?=\s|$)', maxpair.replace(" ", ""),
+                             newWord)  # for surrounded by whitespacesy whitespaces
+            """
+            #without regex:
+            newWord = word
+            index = word.find(maxpair)
+            while index != -1:
+                if index == 0 or word[index - 1] == " ":
+                    if index + len(maxpair) == len(word) or word[index + len(maxpair)] == " ":
+                        newWord = newWord[:index] + maxpair.replace(" ", "") + newWord[index + len(maxpair)-1:]
+                        #newWord[index:index + len(maxpair)] = maxpair.replace(" ", "")
+                        #newWord = word.replace(maxpair, maxpair.replace(" ", ""),iterations)
+                        index = newWord.find(maxpair, index+len(maxpair)-1)
+                        #print(f"replaced {word} with {newWord}")
+                    else:
+                        index = newWord.find(maxpair, index + len(maxpair))
+                else:
+                    index = newWord.find(maxpair, index+len(maxpair)) # -1 because we replaced the string
+
             newVocab[newWord] = self.worddict[word]
 
         self.worddict = newVocab
@@ -107,8 +130,30 @@ class BPE:
         for merge in self.merges:
             for word in appliedworddict:
                 # replace word containing tokens to merge with word with merged tokens
-                appliedworddict[word] = appliedworddict[word].replace(" ".join(merge), "".join(merge))
+                #appliedworddict[word] = appliedworddict[word].replace(" ".join(merge), "".join(merge))
+                """
+                newWord = re.sub(r'^' + re.escape(" ".join(merge)) + r'(?=\s|$)', "".join(merge),
+                                 appliedworddict[word])  # for start of the string
+                newWord = re.sub(r'(?<=\s)' + re.escape(" ".join(merge)) + r'(?=\s|$)', "".join(merge),
+                                 newWord)  # for surrounded by whitespaces
 
+                """
+                #without regex:
+                newWord = appliedworddict[word]
+                search = " ".join(merge)
+                index = newWord.find(search)
+                while index != -1:
+                    if index == 0 or newWord[index - 1] == " ":
+                        if index + len(search) == len(newWord) or newWord[index + len(search)] == " ":
+                            #newWord[index:index + len(search)] = merge[0] + merge[1]
+                            newWord = newWord[:index] + merge[0] + merge[1] + newWord[index + len(search)-1:]
+                            index = newWord.find(search, index + len(search) - 1)
+                        else:
+                            index = newWord.find(search, index + len(search))
+                    else:
+                        index = newWord.find(search, index+len(search)) # -1 because we replaced the string
+
+                appliedworddict[word] = newWord
         # use @@ as "in word" separator instead of </w>
         for word in appliedworddict:
             # replace whitespace with @@
@@ -307,6 +352,19 @@ def getBatchesWithStrings(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray
     return newbatches
 
 
+def testBPE(source: str):
+    source_input = fh.read_file_words(source)
+    source_input_new = source_input
+    source_flat = FileHandler.flattenList(source_input_new)
+    for i in range(500):
+        bpe = BPE(source_flat)
+        bpe.learnBPE(i)
+        applied = bpe.applyBPE(source_input_new)
+        dictio = Dictionary(applied)
+        print(len(dictio.getDictionary()))
+
+
+
 def analyzeBPE(source: str, target: str):
     # input List[List]]
     source_input = fh.read_file_words(source)
@@ -321,7 +379,7 @@ def analyzeBPE(source: str, target: str):
     # save results in a list to plot later
     results = []
 
-    for i in [1000, 5000, 15000]:
+    for i in [1,500, 5000, 15000]:
         # training on source language
         bpe_source = BPE(source_flat)
         bpe_source.learnBPE(i)
@@ -378,6 +436,8 @@ def main():
     bpe.learnBPE(1000)
     dictio = Dictionary(bpe.applyBPE(args.training))"""
 
+    """
+
     parser.add_argument("--englisch", type=str, help="Path to training file")
     parser.add_argument("--deutsch", type=str, help="Path to input file")
     parser.add_argument("--output_int", type=str, help="Path to output file")
@@ -390,7 +450,7 @@ def main():
     # input List[str]
     source_flat = FileHandler.flattenList(source_input)
     target_flat = FileHandler.flattenList(target_input)
-
+"""
     """bpe_de = BPE(source_flat)
     bpe_de.learnBPE(1000)
     print(bpe_de.getDict())
@@ -411,19 +471,23 @@ def main():
     # save batches
     FileHandler.saveBatches(batches, args.output)
     """
+
+    """
     dictio_de = Dictionary(source_input[1100:1200])
     dictio_en = Dictionary(target_input[1100:1200])
-    batches = createBatches(source_input[1100:1200], target_input[1100:1200], 20, 5, dictio_de, dictio_en)
+    batches = createBatches(source_input[1100:1200], target_input[1100:1200], 200, 5, dictio_de, dictio_en)
     str_batches = getBatchesWithStrings(batches, dictio_de, dictio_en)
     FileHandler.saveBatches(batches, args.output_int,4)
-    FileHandler.saveBatches(str_batches, args.output_str,20)
+    FileHandler.saveBatches(str_batches, args.output_str,20)"""
 
 
-    """# analyze BPE
+    # analyze BPE
     parser.add_argument("--source", type=str, help="Path to source file")
     parser.add_argument("--target", type=str, help="Path to target file")
     args = parser.parse_args()
-    analyzeBPE(args.source, args.target)"""
+    analyzeBPE(args.source, args.target)
+    #testBPE(args.source)
+
 
 
 if __name__ == "__main__":
