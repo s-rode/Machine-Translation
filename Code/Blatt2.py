@@ -274,40 +274,31 @@ class Batch:
              after that we want to merge those small batches into bigger ones"""
 
         batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-        batchcounter = 0
 
+        batches.append(Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
+                                        voc_target))
+        target = target[1:]
+        source = source[1:]
         while len(target) > 0:
-            if len(target[0]) + 1 > batchsize:
-                # split list into two pieces if batchsize is less than list length
-                # when this happens, listcount is 0
-                target1 = [target[0][c] for c in range(int(len(target[0]) / 2))]
-                target2 = [target[0][c] for c in range(int(len(target[0]) / 2), len(target[0]))]
-                source1 = [source[0][c] for c in range(int(len(source[0]) / 2))]
-                source2 = [source[0][c] for c in range(int(len(source[0]) / 2), len(source[0]))]
-                target = [target1] + [target2] + target[1:]
-                source = [source1] + [source2] + source[1:]
-            elif batchcounter + len(target[0]) + 1 > batchsize:
-                # fill up the rest of the batch with padding
-                Batch.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
-                batchcounter = 0
+            (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
+                                                     voc_target)
+            (s, t, l) = batches[-1]
+            if len(target[0]) + 1 + len(s) > batchsize:  #
+                s1 = np.concatenate((s, s_new[:(batchsize - len(s))]))
+                t1 = np.concatenate((t, t_new[:(batchsize - len(s))]))
+                l1 = np.concatenate((l, l_new[:(batchsize - len(s))]))
+                batches[-1] = (s1, t1, l1)
+                batches.append(
+                    (s_new[(batchsize - len(s)):], t_new[(batchsize - len(s)):], l_new[(batchsize - len(s)):]))
             else:
-                (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source, voc_target)
-                # if it doesn't exist yet, create a new batch
-                if batchcounter == 0:
-                    batches.append((s_new, t_new, l_new))
-                else:
-                    (s, t, l) = batches[-1]
-                    s1 = np.concatenate((s, s_new))
-                    t1 = np.concatenate((t, t_new))
-                    l1 = np.concatenate((l, l_new))
-                    batches[-1] = (s1, t1, l1)
-                batchcounter += len(target[0]) + 1
-                # pop the first element of the lists
-                target = target[1:]
-                source = source[1:]
-
+                s1 = np.concatenate((s, s_new))
+                t1 = np.concatenate((t, t_new))
+                l1 = np.concatenate((l, l_new))
+                batches[-1] = (s1, t1, l1)
+            target = target[1:]
+            source = source[1:]
         # fill up the last batch with padding
-        Batch.fillUpwithPadding(batches, batchsize - batchcounter, windowsize, voc_source, voc_target)
+        Batch.fillUpwithPadding(batches, batchsize - len(batches[-1][0]), windowsize, voc_source, voc_target)
         return batches
 
     @staticmethod
