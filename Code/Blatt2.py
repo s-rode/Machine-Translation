@@ -1,3 +1,5 @@
+import numpy
+
 from Blatt1 import FileHandler as fh
 
 import argparse
@@ -272,25 +274,22 @@ class Batch:
             -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """ for each sentence pair in the input, create a batch
              after that we want to merge those small batches into bigger ones"""
-
+        # initialize the batches array i.e. appending first (empty) element
         batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-
-        batches.append(Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
-                                        voc_target))
-        target = target[1:]
-        source = source[1:]
+        batches.append((numpy.empty([0,2*windowsize+1], dtype=int), numpy.empty([0,windowsize], dtype=int), numpy.empty([0,1], dtype=int)))
         while len(target) > 0:
             (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
                                                      voc_target)
             (s, t, l) = batches[-1]
-            if len(target[0]) + 1 + len(s) > batchsize:  #
+            if len(target[0]) + 1 + len(s) > batchsize:  # small batch too long
+                # splitting small batch -> filling up the last batch and creating a new one
                 s1 = np.concatenate((s, s_new[:(batchsize - len(s))]))
                 t1 = np.concatenate((t, t_new[:(batchsize - len(s))]))
                 l1 = np.concatenate((l, l_new[:(batchsize - len(s))]))
                 batches[-1] = (s1, t1, l1)
                 batches.append(
                     (s_new[(batchsize - len(s)):], t_new[(batchsize - len(s)):], l_new[(batchsize - len(s)):]))
-            else:
+            else: # concatenating small batch to batch
                 s1 = np.concatenate((s, s_new))
                 t1 = np.concatenate((t, t_new))
                 l1 = np.concatenate((l, l_new))
