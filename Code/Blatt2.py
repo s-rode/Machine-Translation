@@ -1,3 +1,5 @@
+import math
+
 import numpy
 
 from Blatt1 import FileHandler as fh
@@ -191,6 +193,7 @@ class Dictionary:
         dictdict["<s>"] = 0
         dictdict["</s>"] = 1
         dictdict["<unk>"] = 2
+        dictdict["<unk>@@"] = 3
         inputList = self.splitintosubwords(text)
         for i in range(len(inputList)):
             for j in range(len(inputList[i])):
@@ -230,20 +233,22 @@ class Batch:
     @staticmethod
     def createSmallBatch(source: list[str],
                          target: list[str],
-                         batchsize: int,
+                         sequencelen: int,
                          windowsize: int,
                          voc_source: Dictionary,
                          voc_target: Dictionary) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """create a batch of one sentence pair"""
         vocmapping_source = voc_source.getDictionary()
         vocmapping_target = voc_target.getDictionary()
-        S = np.zeros((batchsize, windowsize * 2 + 1), dtype=int)
-        T = np.zeros((batchsize, windowsize), dtype=int)
-        L = np.zeros((batchsize, 1), dtype=int)
+        S = np.zeros((sequencelen, windowsize * 2 + 1), dtype=int)
+        T = np.zeros((sequencelen, windowsize), dtype=int)
+        L = np.zeros((sequencelen, 1), dtype=int)
 
+        if(len(target)==0):
+            print("hallo")
         alignmentpar = len(source) / len(target)
 
-        for i in range(batchsize):
+        for i in range(sequencelen):
             b_i = round(alignmentpar * i)
             for j in range(2 * windowsize + 1):
                 if b_i - windowsize + j < 0:
@@ -292,8 +297,7 @@ class Batch:
                         numpy.empty([0, 1], dtype=int)))
         while len(target) > 0:
             (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize,
-                                                           voc_source,
-                                                           voc_target)
+                                                           voc_source, voc_target)
 
             (s, t, l) = batches[-1] # get last batch i.e. the batch we want to append to
             if len(target[0]) + 1 + len(s) > batchsize:  # small batch too long
@@ -302,18 +306,22 @@ class Batch:
                 t1 = np.concatenate((t, t_new[:(batchsize - len(s))]))
                 l1 = np.concatenate((l, l_new[:(batchsize - len(s))]))
                 batches[-1] = (s1, t1, l1)
-                batches.append(
-                    (numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
-                     numpy.empty([0, 1], dtype=int)))
-                target[0] = target[0][(batchsize - len(s)):]
-                source[0] = source[0][(batchsize - len(s)):]
+                for i in range(math.ceil(len(s)/batchsize)):
+                    batches.append(
+                        (numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
+                         numpy.empty([0, 1], dtype=int)))
+                    (s, t, l) = batches[-1]
+                    s1 = np.concatenate((s, s_new[(batchsize - len(s))+i*batchsize:(batchsize - len(s))+(i+1)*batchsize]))
+                    t1 = np.concatenate((t, t_new[(batchsize - len(s))+i*batchsize:(batchsize - len(s))+(i+1)*batchsize]))
+                    l1 = np.concatenate((l, l_new[(batchsize - len(s))+i*batchsize:(batchsize - len(s))+(i+1)*batchsize]))
+                    batches[-1] = (s1, t1, l1)
             else:  # concatenating small batch to batch
                 s1 = np.concatenate((s, s_new))
                 t1 = np.concatenate((t, t_new))
                 l1 = np.concatenate((l, l_new))
                 batches[-1] = (s1, t1, l1)
-                target = target[1:]
-                source = source[1:]
+            target = target[1:]
+            source = source[1:]
         # fill up the last batch with padding
         Batch.fillUpwithPadding(batches, batchsize - len(batches[-1][0]), windowsize, voc_source, voc_target)
         return batches
@@ -440,9 +448,11 @@ class Analysis:
         target_input = fh.read_file_words(args.englisch)
         # lines 1100 to 1200 of both inputs
         combined_input = source_input[1100:1200] + target_input[1100:1200]
+        bpe_mixed = BPE(FileHandler.flattenList(combined_input))
+        bpe_mixed.learnBPE(1000)
+        dictio_mixed = Dictionary(bpe_mixed.applyBPE(combined_input))
 
-        dictio_mixed = Dictionary(combined_input)
-        batches = Batch.createBatches(source_input[1100:1200], target_input[1100:1200], 200, 5, dictio_mixed,
+        batches = Batch.createBatches(dictio_mixed.filterInput(bpe_mixed.applyBPE(source_input)), dictio_mixed.filterInput(bpe_mixed.applyBPE(target_input)), 200, 5, dictio_mixed,
                                       dictio_mixed)
         str_batches = Batch.getBatchesWithStrings(batches, dictio_mixed, dictio_mixed)
         FileHandler.saveBatches(batches, args.output_int, 4)
@@ -451,7 +461,6 @@ class Analysis:
 
 def main():
     Analysis.printBatches()
-
 
 if __name__ == "__main__":
     main()
