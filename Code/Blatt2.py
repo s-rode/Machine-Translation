@@ -244,8 +244,6 @@ class Batch:
         T = np.zeros((sequencelen, windowsize), dtype=int)
         L = np.zeros((sequencelen, 1), dtype=int)
 
-        if(len(target)==0):
-            print("hallo")
         alignmentpar = len(source) / len(target)
 
         for i in range(sequencelen):
