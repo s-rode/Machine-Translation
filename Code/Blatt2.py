@@ -20,6 +20,7 @@ class FileHandler:
         with open(path, "wb") as f:
             for (s, t, l) in batches:
                 for i in range(len(s)):
+                    # iterate over each row and combine them left-aligned with a tab in between
                     combinedrow = ' '.join(
                         '{{:<{}}}'.format(max_digits).format(item) for item in s[i]) + '\t' + '|' + '\t' + ' '.join(
                         '{{:<{}}}'.format(max_digits).format(item) for item in t[i]) + '\t' + '|' + '\t' + ' '.join(
@@ -72,17 +73,22 @@ class BPE:
         return pairdict
 
     def substitutePair(self, word: str, pair: str) -> str:
+        # it's possible, that we have to do the same merge multiple times in the same word
+        # newWord is the word after each word
         newWord = word
         index = word.find(pair)
+        # we have to ensure that we only merge separate tokens
         while index != -1:
+            # check if first part of pair is a separate token
             if index == 0 or newWord[index - 1] == " ":
+                # check if second part of pair is a separate token (either end of word or whitespace)
                 if index + len(pair) == len(newWord) or newWord[index + len(pair)] == " ":
                     newWord = newWord[:index] + pair.replace(" ", "") + newWord[index + len(pair):]
-                    index = newWord.find(pair, index + len(pair) - 1)
+                    index = newWord.find(pair, index + len(pair) - 1)  # -1 because we replaced the string
                 else:
                     index = newWord.find(pair, index + 1)
             else:
-                index = newWord.find(pair, index + 1)  # -1 because we replaced the string
+                index = newWord.find(pair, index + 1)
         return newWord
 
     def mergeTokens(self, pairdict: dict[str, str]) -> dict[str, int]:
@@ -93,6 +99,7 @@ class BPE:
         maxpair = max(pairdict, key=lambda k: (pairdict[k], k))
         # print(f"merge: {maxpair}")
         self.merges.append(tuple(maxpair.split()))
+        # update worddict after finding most frequent pair
         newVocab = {}
         for word in self.worddict:
             # replace most frequent pair with merged pair but (!) differentiate between </w> and no </w>
@@ -201,6 +208,7 @@ class Dictionary:
                 l = text[i][j].split("@@")
                 for k in range(len(l) - 1):
                     newlist[i].append(l[k] + "@@")
+                # add last element without @@
                 newlist[i].append(l[(len(l) - 1)])
         return newlist
 
@@ -210,7 +218,11 @@ class Dictionary:
         for i in range(len(splittedtext)):
             for j in range(len(splittedtext[i])):
                 if splittedtext[i][j] not in self.dict:
-                    splittedtext[i][j] = "<unk>"
+                    ## nachträglich hinzugefügt:
+                    if splittedtext[i][j][-2:] == "@@":
+                        splittedtext[i][j] = "<unk>@@"
+                    else:
+                        splittedtext[i][j] = "<unk>"
         return splittedtext
 
 
@@ -253,7 +265,6 @@ class Batch:
                 L[i] = vocmapping_target["</s>"]
         return S, T, L
 
-
     @staticmethod
     def fillUpwithPadding(batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]], tofillup: int,
                           windowsize: int,
@@ -274,13 +285,17 @@ class Batch:
             -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """ for each sentence pair in the input, create a batch
              after that we want to merge those small batches into bigger ones"""
+
         # initialize the batches array i.e. appending first (empty) element
         batches: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-        batches.append((numpy.empty([0,2*windowsize+1], dtype=int), numpy.empty([0,windowsize], dtype=int), numpy.empty([0,1], dtype=int)))
+        batches.append((numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
+                        numpy.empty([0, 1], dtype=int)))
         while len(target) > 0:
-            (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize, voc_source,
-                                                     voc_target)
-            (s, t, l) = batches[-1]
+            (s_new, t_new, l_new) = Batch.createSmallBatch(source[0], target[0], len(target[0]) + 1, windowsize,
+                                                           voc_source,
+                                                           voc_target)
+
+            (s, t, l) = batches[-1] # get last batch i.e. the batch we want to append to
             if len(target[0]) + 1 + len(s) > batchsize:  # small batch too long
                 # splitting small batch -> filling up the last batch and creating a new one
                 s1 = np.concatenate((s, s_new[:(batchsize - len(s))]))
@@ -288,14 +303,17 @@ class Batch:
                 l1 = np.concatenate((l, l_new[:(batchsize - len(s))]))
                 batches[-1] = (s1, t1, l1)
                 batches.append(
-                    (s_new[(batchsize - len(s)):], t_new[(batchsize - len(s)):], l_new[(batchsize - len(s)):]))
-            else: # concatenating small batch to batch
+                    (numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
+                     numpy.empty([0, 1], dtype=int)))
+                target[0] = target[0][(batchsize - len(s)):]
+                source[0] = source[0][(batchsize - len(s)):]
+            else:  # concatenating small batch to batch
                 s1 = np.concatenate((s, s_new))
                 t1 = np.concatenate((t, t_new))
                 l1 = np.concatenate((l, l_new))
                 batches[-1] = (s1, t1, l1)
-            target = target[1:]
-            source = source[1:]
+                target = target[1:]
+                source = source[1:]
         # fill up the last batch with padding
         Batch.fillUpwithPadding(batches, batchsize - len(batches[-1][0]), windowsize, voc_source, voc_target)
         return batches
@@ -424,7 +442,8 @@ class Analysis:
         combined_input = source_input[1100:1200] + target_input[1100:1200]
 
         dictio_mixed = Dictionary(combined_input)
-        batches = Batch.createBatches(source_input[1100:1200], target_input[1100:1200], 200, 5, dictio_mixed, dictio_mixed)
+        batches = Batch.createBatches(source_input[1100:1200], target_input[1100:1200], 200, 5, dictio_mixed,
+                                      dictio_mixed)
         str_batches = Batch.getBatchesWithStrings(batches, dictio_mixed, dictio_mixed)
         FileHandler.saveBatches(batches, args.output_int, 4)
         FileHandler.saveBatches(str_batches, args.output_str, 20)
