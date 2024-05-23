@@ -10,7 +10,6 @@ from Blatt3 import FCLayer
 from Blatt2 import BPE, Dictionary, Batch, FileHandler as FH2
 from Blatt1 import FileHandler as FH1
 
-
 def load_bpe(bpe_path: str):
     with open(f"../config/{bpe_path}", "rb") as f:
         return pkl.load(f)
@@ -118,7 +117,7 @@ def train_one_epoch(model: nn.Module,
                     checkpoints: list[int],
                     lossfunc: nn.Module):
     # loss calculation here
-    for batch in enumerate(dataloader):
+    for batch in dataloader:
         loss = torch.zeros(len(batch))
         for i in range(len(batch)):
             _,_,y_m = batch[i]
@@ -141,16 +140,14 @@ def eval_model(model: nn.Module,
     total_len = 0
     total_acc = 0
     with torch.no_grad():
-        for i, data in enumerate(data_loader):
-            for item in data:
-                _,_,y = item
-                y_m = model.forward(item)
-                total_loss += loss(y_m,y) # maybe later += loss.item()
-                total_len += 1
+        for batch in data_loader:
+            _, _, y = batch
+            y_m = model(batch)
+            total_loss += loss(y_m, y) # maybe later += loss.item(), total_loss is a vector now
+            total_len += 1
                 # torch.max is (values, indices)
-                _,x = torch.max(y_m, 0) # maybe change to dim=1 later
-                if x == y:
-                    total_acc += 1
+            _, predicted = torch.max(y_m, dim=1) # takes the index of the highest value of each row
+            total_acc += (predicted == y).sum().item()
     # return perplexity and accuracy
     return 2**(total_loss/total_len), (total_acc/total_len)
 
@@ -190,8 +187,8 @@ class FFTranslator(nn.Module):
         s = self.embedding(s) # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
         t = self.embedding(t) # => 3 dim
         # concatenate the embeddings
-        torch.flatten(s, start_dim=0)  # check for propagating with batches
-        torch.flatten(t, start_dim=0)
+        torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
+        torch.flatten(t, start_dim=1)
         s = self.fc_source.propagate_forward(s)
         t = self.fc_target.propagate_forward(t)
         # concatenating s and t
