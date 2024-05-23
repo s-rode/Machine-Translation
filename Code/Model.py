@@ -27,7 +27,6 @@ def save_bpe(text_path: str, bpe_name: str, iterations: int):
 def save_model(model: nn.Module, model_name: str):
     torch.save(model, f"../config/{model_name}")
 
-
 def load_model(model_name: str):
     return torch.load(f"../config/{model_name}")
 
@@ -78,7 +77,7 @@ def training_routine(model: nn.Module,
         # set model to training mode to ensure that the gradient tracking is on
         model.train()
         print(f"Epoch {epoch + 1}")
-        train_one_epoch(model, train_dataloader, optimizer, checkpoints[epoch], lossfunc)
+        train_one_epoch(model, train_dataloader, optimizer, checkpoints[epoch], lossfunc, epoch)
 
         # evaluate the model every n epochs and check for stagnation
         if (epoch + 1) % eval_every_n_epochs == 0:
@@ -115,18 +114,17 @@ def train_one_epoch(model: nn.Module,
                     dataloader: DataLoader,
                     optimizer: torch.optim,
                     checkpoints: list[int],
-                    lossfunc: nn.Module):
+                    lossfunc: nn.Module, epoch: int):
     # loss calculation here
-    for batch in dataloader:
-        loss = torch.zeros(len(batch))
-        for i in range(len(batch)):
-            _,_,y_m = batch[i]
-            y = model.forward(batch[i])
-            loss[i] = lossfunc(y,y_m)
-
+    for i,batch in enumerate(dataloader):
+        _,_,y_m = batch
+        y = model(batch)
+        loss = lossfunc(y,y_m)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+        if i in checkpoints:
+            save_model(model,f"model_epoch{epoch}_iter_{i}")
 
 
 
@@ -143,13 +141,13 @@ def eval_model(model: nn.Module,
         for batch in data_loader:
             _, _, y = batch
             y_m = model(batch)
-            total_loss += loss(y_m, y) # maybe later += loss.item(), total_loss is a vector now
+            total_loss += loss(y_m, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
             total_len += 1
                 # torch.max is (values, indices)
             _, predicted = torch.max(y_m, dim=1) # takes the index of the highest value of each row
             total_acc += (predicted == y).sum().item()
     # return perplexity and accuracy
-    return 2**(total_loss/total_len), (total_acc/total_len)
+    return 2**(total_loss/(total_len*data_loader.batch_size)), (total_acc/(total_len*data_loader.batch_size))
 
 
 

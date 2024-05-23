@@ -304,6 +304,7 @@ class Batch:
                 t1 = np.concatenate((t, t_new[:(batchsize - len(s))]))
                 l1 = np.concatenate((l, l_new[:(batchsize - len(s))]))
                 batches[-1] = (s1, t1, l1)
+<<<<<<< Updated upstream
                 for i in range(math.ceil(len(s)/batchsize)):
                     batches.append(
                         (numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
@@ -314,6 +315,13 @@ class Batch:
                     l1 = np.concatenate((l, l_new[(batchsize - len(s))+i*batchsize:(batchsize - len(s))+(i+1)*batchsize]))
                     batches[-1] = (s1, t1, l1)
             else:  # concatenating small batch to batch
+=======
+                batches.append(
+                    (numpy.empty([0, 2 * windowsize + 1], dtype=int), numpy.empty([0, windowsize], dtype=int),
+                     numpy.empty([0, 1], dtype=int)))
+                target[0] = target[batchsize - len(s):]
+            else: # concatenating small batch to batch
+>>>>>>> Stashed changes
                 s1 = np.concatenate((s, s_new))
                 t1 = np.concatenate((t, t_new))
                 l1 = np.concatenate((l, l_new))
