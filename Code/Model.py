@@ -158,7 +158,6 @@ def eval_model(model: nn.Module,
 
 
 
-
 class TranslationDataset(Dataset):
     def __init__(self, big_batch: list[tuple[np.ndarray, np.ndarray, np.ndarray]]):
         # big_batch has only a single element
@@ -185,20 +184,20 @@ class FFTranslator(nn.Module):
         self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 384, "relu")
         self.fc_2 = FCLayer(self.fc_1.shape_out, dict_len, "relu")
 
-    def forward(self, item: tuple[np.array, np.array, np.array]):
-        s = torch.from_numpy(item[0])
-        t = torch.from_numpy(item[1])
-        l = torch.from_numpy(item[2])
+    def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
+        s, t, l = item
         # get embeddings
-        s = self.embedding(s)
-        t = self.embedding(t)
+        s = self.embedding(s) # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
+        t = self.embedding(t) # => 3 dim
         # concatenate the embeddings
         torch.flatten(s, start_dim=0)  # check for propagating with batches
         torch.flatten(t, start_dim=0)
         s = self.fc_source.propagate_forward(s)
         t = self.fc_target.propagate_forward(t)
         # concatenating s and t
-        x = torch.cat((s, t), 0)
+        # since s and t have shapes (batch_size, n) concatenating them along dim=1
+        # results in a shape of (batch_size, ...)
+        x = torch.cat((s, t), 1)
         x = self.fc_1.propagate_forward(x)
         x = self.fc_2.propagate_forward(x)
         # cross-entropy
