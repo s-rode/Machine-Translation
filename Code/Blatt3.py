@@ -2,14 +2,21 @@ import torch
 import numpy as np
 
 
-class FCLayer:
-    def __init__(self, shape_in: int, shape_out: int, activation: str):
+
+
+class FCLayer(torch.nn.Module):
+    """torch.nn.Module inheritance so that the parameters
+        are automatically registered and can be accessed via model.parameters()"""
+    def __init__(self, shape_in: int, shape_out: int, activation: str, bias: bool = True):
+        super().__init__()
         self.shape_in = shape_in
         self.shape_out = shape_out
-        self.weights = torch.rand(shape_out, shape_in)
-        self.weights.requires_grad(True)
-        self.bias = torch.rand(shape_in)
-        self.bias.requires_grad(True)
+        self.weights = torch.nn.Parameter(torch.rand(shape_out, shape_in))
+        # automatically requires grad
+        if bias:
+            self.bias = torch.nn.Parameter(torch.rand(shape_in))
+        else:
+            self.bias = torch.zeros(shape_in)
         self.activation = activation
         match activation:
             case "relu":
@@ -19,8 +26,6 @@ class FCLayer:
                 self.activation = torch.sigmoid
             case "tanh":
                 self.activation = torch.tanh
-
-
 
     def propagate_forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape != self.weights.shape[0]:
