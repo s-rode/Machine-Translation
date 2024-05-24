@@ -10,14 +10,17 @@ from Blatt3 import FCLayer
 from Blatt2 import BPE, Dictionary, Batch, FileHandler as FH2
 from Blatt1 import FileHandler as FH1
 
+
+debug = 2
 def load_bpe(bpe_path: str):
     with open(f"../config/{bpe_path}", "rb") as f:
         return pkl.load(f)
 
 
-def save_bpe(text_path: str, bpe_name: str, iterations: int):
-    input = FH1.read_file_words(text_path)
-    bpe = BPE(FH2.flattenList(input))
+def save_bpe(text_path_de: str, text_path_en : str, bpe_name: str, iterations: int):
+    input_de = FH1.read_file_words(text_path_de)
+    input_en = FH1.read_file_words(text_path_en)
+    bpe = BPE(FH2.flattenList(input_de + input_en))
     bpe.learnBPE(iterations)
     with open(f"../config/{bpe_name}", "wb") as f:
         pkl.dump(bpe, f)
@@ -35,10 +38,14 @@ def load_voc(voc_path):
     with open(f"../config/{voc_path}", "rb") as f:
         return pkl.load(f)
 
+def load_batch(batch_path):
+    with open(f"../config/{batch_path}", "rb") as f:
+        return pkl.load(f)
 
-def save_voc(text_path: str, voc_name: str, bpe):
-    input = FH1.read_file_words(text_path)
-    dict = Dictionary(bpe.applyBPE(input))
+def save_voc(text_path_de: str,text_path_en :str, voc_name: str, bpe):
+    input_de = FH1.read_file_words(text_path_de)
+    input_en = FH1.read_file_words(text_path_en)
+    dict = Dictionary(bpe.applyBPE(input_de + input_en))
     with open(f"../config/{voc_name}", "wb") as f:
         pkl.dump(dict, f)
     return dict
@@ -185,14 +192,20 @@ class FFTranslator(nn.Module):
         # get embeddings
         s = self.embedding(s) # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
         t = self.embedding(t) # => 3 dim
+        if debug > 1:
+            print(s.shape)
         # concatenate the embeddings
-        torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
-        torch.flatten(t, start_dim=1)
+        s = s.view(s.shape[0], -1)  # concatenating the embedding vectors of a row (which is the inner dimension)
+        t = t.view(t.shape[0], -1)
+        if debug > 1:
+            print(t.shape)
         s = self.fc_source.propagate_forward(s)
         t = self.fc_target.propagate_forward(t)
         # concatenating s and t
         # since s and t have shapes (batch_size, n) concatenating them along dim=1
         # results in a shape of (batch_size, ...)
+        if debug > 1:
+            print(t.shape,s.shape)
         x = torch.cat((s, t), 1)
         x = self.fc_1.propagate_forward(x)
         x = self.fc_2.propagate_forward(x)
@@ -209,48 +222,65 @@ if __name__ == "__main__":
     parser.add_argument("--eval_en", type=str, help="path to en evaluation data")
     parser.add_argument("--bpe", type=str, help="name of bpe file")
     parser.add_argument("--voc", type=str, help="name of voc file")
+    parser.add_argument("--train_batch", type=str, help="name of training batch file")
+    parser.add_argument("--eval_batch", type=str, help="name of evaluation batch file")
     args = parser.parse_args()
 
-    # load or create BPE
-    if args.bpe is not None:
-        bpe = load_bpe(args.bpe)
+    # load or create Batches
+    if args.train_batch is not None and args.eval_batch is not None:
+        train_batch = load_batch(args.train_batch)
+        eval_batch = load_batch(args.eval_batch)
     else:
-        bpe = save_bpe(args.train, "bpe.pkl", 7000)
+        # load or create BPE
+        if args.bpe is not None:
+            bpe = load_bpe(args.bpe)
+        else:
+            bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", 7000)
 
-    # load or create vocabulary
-    if args.voc is not None:
-        voc = load_voc(args.voc)
-    else:
-        voc = save_voc(args.train, "voc.pkl", bpe)
+        # load or create vocabulary
+        if args.voc is not None:
+            voc = load_voc(args.voc)
+        else:
+            voc = save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
 
-    # load training and evaluation data
-    raw_train_data_de = FH1.read_file_words(args.train_de)
-    raw_train_data_en = FH1.read_file_words(args.train_en)
-    raw_eval_data_de = FH1.read_file_words(args.eval)
-    raw_eval_data_en = FH1.read_file_words(args.eval)
+        # load training and evaluation data
+        raw_train_data_de = FH1.read_file_words(args.train_de)
+        raw_train_data_en = FH1.read_file_words(args.train_en)
+        raw_eval_data_de = FH1.read_file_words(args.eval_de)
+        raw_eval_data_en = FH1.read_file_words(args.eval_en)
+        if debug > 0:
+            print("applying bpe...")
+        # apply BPE to data and apply vocabulary
+        train_data_de = voc.filterInput(bpe.applyBPE(raw_train_data_de))
+        train_data_en = voc.filterInput(bpe.applyBPE(raw_train_data_en))
+        eval_data_de = voc.filterInput(bpe.applyBPE(raw_eval_data_de))
+        eval_data_en = voc.filterInput(bpe.applyBPE(raw_eval_data_en))
+        if debug > 0:
+            print("creating batches...")
+        # create big batches
+        train_total_words = sum([len(x) for x in train_data_en])
+        eval_total_words = sum([len(x) for x in eval_data_en])
+        windowsize = 5
+        train_batch = Batch(train_data_de, train_data_en, train_total_words, windowsize, voc, voc)
+        eval_batch = Batch(eval_data_de, eval_data_en, eval_total_words, windowsize, voc, voc)
 
-    # apply BPE to data and apply vocabulary
-    train_data_de = voc.filterInput(bpe.applyBPE(raw_train_data_de))
-    train_data_en = voc.filterInput(bpe.applyBPE(raw_train_data_en))
-    eval_data_de = voc.filterInput(bpe.applyBPE(raw_eval_data_de))
-    eval_data_en = voc.filterInput(bpe.applyBPE(raw_eval_data_en))
-
-    # create big batches
-    train_total_words = sum([len(x) for x in train_data_en])
-    eval_total_words = sum([len(x) for x in eval_data_en])
-    train_batch = Batch.createBatches(train_data_de, train_data_en, train_total_words, 5, voc, voc)
-    eval_batch = Batch.createBatches(eval_data_de, eval_data_en, eval_total_words, 5, voc, voc)
+        # saving batches for next time
+        with open(f"../config/train_batch.pkl", "wb") as f:
+            pkl.dump(train_batch, f)
+        with open(f"../config/eval_batch.pkl", "wb") as f:
+            pkl.dump(eval_batch, f)
 
     # create datasets
-    train_dataset = TranslationDataset(train_batch)
-    eval_dataset = TranslationDataset(eval_batch)
+    train_dataset = TranslationDataset(train_batch.batches)
+    eval_dataset = TranslationDataset(eval_batch.batches)
 
     # create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size= 128, shuffle=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size= 128, shuffle=False)
-
+    if debug > 0:
+        print("start training...")
     # training
-    model = FFTranslator(len(voc),3,100)
+    model = FFTranslator(train_batch.voc_len, train_batch.windowsize,100)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
     epochs = 20
     checkpoints = [[] for i in range(epochs)]

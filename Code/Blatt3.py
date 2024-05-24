@@ -28,8 +28,6 @@ class FCLayer(torch.nn.Module):
                 self.activation = torch.tanh
 
     def propagate_forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape != self.weights.shape[0]:
-            raise ValueError("x shape does not match weight shape")
         # output z
         z = self.weights @ x + self.bias
         return self.activation(z)

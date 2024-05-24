@@ -230,6 +230,13 @@ class Dictionary:
 
 
 class Batch:
+
+    def __init__(self,source: list[list[str]], target: list[list[str]], batchsize: int, windowsize: int,
+                      voc_source: Dictionary, voc_target: Dictionary):
+        self.batches = Batch.createBatches(source, target, batchsize, windowsize,
+                      voc_source, voc_target)
+        self.windowsize = windowsize # is needed as parameter for the model
+        self.voc_len = len(voc_source.dict) # dict will be a combined dict in our case so voc_source = vod_target
     @staticmethod
     def createSmallBatch(source: list[str],
                          target: list[str],
