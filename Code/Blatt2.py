@@ -328,7 +328,7 @@ class Batch:
             target = target[1:]
             source = source[1:]
         # fill up the last batch with padding
-        Batch.fillUpwithPadding(batches, batchsize - len(batches[-1][0]), windowsize, voc_source, voc_target)
+        #Batch.fillUpwithPadding(batches, batchsize - len(batches[-1][0]), windowsize, voc_source, voc_target)
         return batches
 
     @staticmethod
@@ -338,6 +338,7 @@ class Batch:
         # for each elem, which is a number, change it to the corresponding word
         for i in range(len(matr)):
             for j in range(len(matr[i])):
+                print(f"Progress: {i}/{len(matr)}")
                 test = list(mapping.keys())[list(mapping.values()).index(matr[i][j])]  # super slow
                 newmatr[i][j] = test
         return newmatr

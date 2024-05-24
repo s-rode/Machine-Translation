@@ -236,23 +236,23 @@ if __name__ == "__main__":
     parser.add_argument("--eval_batch", type=str, help="name of evaluation batch file")
     args = parser.parse_args()
 
+    # load or create BPE
+    if args.bpe is not None:
+        bpe = load_bpe(args.bpe)
+    else:
+        bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", 7000)
+
+    # load or create vocabulary
+    if args.voc is not None:
+        voc = load_voc(args.voc)
+    else:
+        voc = save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
+
     # load or create Batches
     if args.train_batch is not None and args.eval_batch is not None:
         train_batch = load_batch(args.train_batch)
         eval_batch = load_batch(args.eval_batch)
     else:
-        # load or create BPE
-        if args.bpe is not None:
-            bpe = load_bpe(args.bpe)
-        else:
-            bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", 7000)
-
-        # load or create vocabulary
-        if args.voc is not None:
-            voc = load_voc(args.voc)
-        else:
-            voc = save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
-
         # load training and evaluation data
         raw_train_data_de = FH1.read_file_words(args.train_de)
         raw_train_data_en = FH1.read_file_words(args.train_en)
@@ -268,8 +268,8 @@ if __name__ == "__main__":
         if debug > 0:
             print("creating batches...")
         # create big batches
-        train_total_words = sum([len(x) for x in train_data_en])
-        eval_total_words = sum([len(x) for x in eval_data_en])
+        train_total_words = sum([len(x) for x in train_data_en]) + len(train_data_en)
+        eval_total_words = sum([len(x) for x in eval_data_en]) + len(eval_data_en)
         windowsize = 5
         train_batch = Batch(train_data_de, train_data_en, train_total_words, windowsize, voc, voc)
         eval_batch = Batch(eval_data_de, eval_data_en, eval_total_words, windowsize, voc, voc)
@@ -279,6 +279,12 @@ if __name__ == "__main__":
             pkl.dump(train_batch, f)
         with open(f"../config/eval_batch.pkl", "wb") as f:
             pkl.dump(eval_batch, f)
+
+    if debug > 4:
+            str_train_batch = Batch.getBatchesWithStrings(train_batch.batches, voc, voc)
+            FH2.saveBatches(str_train_batch, "train_batch.txt", 20)
+            print(str_train_batch)
+
 
     # create datasets
     train_dataset = TranslationDataset(train_batch.batches)
