@@ -14,9 +14,9 @@ class FCLayer(torch.nn.Module):
         self.weights = torch.nn.Parameter(torch.rand(shape_out, shape_in))
         # automatically requires grad
         if bias:
-            self.bias = torch.nn.Parameter(torch.rand(shape_in))
+            self.bias = torch.nn.Parameter(torch.rand(shape_out,1))
         else:
-            self.bias = torch.zeros(shape_in)
+            self.bias = torch.zeros(shape_out,1)
         self.activation = activation
         match activation:
             case "relu":

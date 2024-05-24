@@ -11,7 +11,7 @@ from Blatt2 import BPE, Dictionary, Batch, FileHandler as FH2
 from Blatt1 import FileHandler as FH1
 
 
-debug = 2
+debug = 1
 def load_bpe(bpe_path: str):
     with open(f"../config/{bpe_path}", "rb") as f:
         return pkl.load(f)
@@ -90,7 +90,6 @@ def training_routine(model: nn.Module,
         if (epoch + 1) % eval_every_n_epochs == 0:
             eval_perpl,eval_acc  = eval_model(model, eval_dataloader, lossfunc)
             print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
-            #new_eval should be smaller than old eval
             # first evaluation
             if best_perpl == -1 or best_acc == -1:
                 best_perpl = eval_perpl
@@ -125,9 +124,13 @@ def train_one_epoch(model: nn.Module,
                     lossfunc: nn.Module, epoch: int):
     # loss calculation here
     for i,batch in enumerate(dataloader):
-        _,_,y_m = batch
-        y = model(batch)
-        loss = lossfunc(y,y_m)
+        _,_,y = batch
+        y = y.squeeze()#loss func needs a row vector,
+        y = y.to(torch.long)#coverted to long
+        y_w = model(batch)
+        if debug > 1:
+            print(y_w.shape,y.shape)
+        loss = lossfunc(y_w,y)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -148,11 +151,13 @@ def eval_model(model: nn.Module,
     with torch.no_grad():
         for batch in data_loader:
             _, _, y = batch
-            y_m = model(batch)
-            total_loss += loss(y_m, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
+            y_w = model(batch)
+            y = y.squeeze()
+            y = y.to(torch.long)
+            total_loss += loss(y_w, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
             total_len += 1
                 # torch.max is (values, indices)
-            _, predicted = torch.max(y_m, dim=1) # takes the index of the highest value of each row
+            _, predicted = torch.max(y_w, dim=1) # takes the index of the highest value of each row
             total_acc += (predicted == y).sum().item()
     # return perplexity and accuracy
     return 2**(total_loss/(total_len*data_loader.batch_size)), (total_acc/(total_len*data_loader.batch_size))
@@ -195,10 +200,12 @@ class FFTranslator(nn.Module):
         if debug > 1:
             print(s.shape)
         # concatenate the embeddings
-        s = s.view(s.shape[0], -1)  # concatenating the embedding vectors of a row (which is the inner dimension)
-        t = t.view(t.shape[0], -1)
+        s = torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
+        t = torch.flatten(t, start_dim=1)
+        s = torch.transpose(s, 0, 1)
+        t = torch.transpose(t, 0, 1)
         if debug > 1:
-            print(t.shape)
+            print(s.shape)
         s = self.fc_source.propagate_forward(s)
         t = self.fc_target.propagate_forward(t)
         # concatenating s and t
@@ -206,11 +213,14 @@ class FFTranslator(nn.Module):
         # results in a shape of (batch_size, ...)
         if debug > 1:
             print(t.shape,s.shape)
-        x = torch.cat((s, t), 1)
+        x = torch.cat((s, t), 0)
+        if debug > 1:
+            print(x.shape)
         x = self.fc_1.propagate_forward(x)
         x = self.fc_2.propagate_forward(x)
         # cross-entropy
         #loss = nn.CrossEntropyLoss()
+        x = torch.transpose(x,0,1)
         return x
 
 
@@ -284,4 +294,4 @@ if __name__ == "__main__":
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
     epochs = 20
     checkpoints = [[] for i in range(epochs)]
-    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,5)
+    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,1)
