@@ -82,6 +82,7 @@ def training_routine(model: nn.Module,
         # evaluate the model every n epochs and check for stagnation
         if (epoch + 1) % eval_every_n_epochs == 0:
             eval_perpl,eval_acc  = eval_model(model, eval_dataloader, lossfunc)
+            print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
             #new_eval should be smaller than old eval
             # first evaluation
             if best_perpl == -1 or best_acc == -1:
@@ -247,3 +248,10 @@ if __name__ == "__main__":
     # create dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size= 128, shuffle=True)
     eval_dataloader = DataLoader(eval_dataset, batch_size= 128, shuffle=False)
+
+    # training
+    model = FFTranslator(len(voc),3,100)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
+    epochs = 20
+    checkpoints = [[] for i in range(epochs)]
+    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,5)
