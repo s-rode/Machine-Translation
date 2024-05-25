@@ -189,7 +189,7 @@ class Dictionary:
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
         dictdict = {}
-        counter = 3
+        counter = 4
         dictdict["<s>"] = 0
         dictdict["</s>"] = 1
         dictdict["<unk>"] = 2
@@ -463,6 +463,7 @@ class Analysis:
         str_batches = Batch.getBatchesWithStrings(batches, dictio_mixed, dictio_mixed)
         FileHandler.saveBatches(batches, args.output_int, 4)
         FileHandler.saveBatches(str_batches, args.output_str, 20)
+
 
 
 def main():

@@ -91,11 +91,12 @@ def training_routine(model: nn.Module,
             eval_perpl,eval_acc  = eval_model(model, eval_dataloader, lossfunc)
             print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
             # first evaluation
+
             if best_perpl == -1 or best_acc == -1:
                 best_perpl = eval_perpl
                 best_acc = eval_acc
             # check if the curr perpl and accuracy is smaller
-            if eval_perpl < best_perpl or eval_acc > best_acc: # maybe change to and later
+            if eval_perpl < best_perpl and eval_acc > best_acc: # maybe change to and later
                 best_perpl = min(best_perpl, eval_perpl)
                 best_acc = max(best_acc, eval_acc)
                 patience = max_patience
@@ -146,7 +147,8 @@ def eval_model(model: nn.Module,
     model.eval()
     # disable gradient calculation
     total_loss = 0
-    total_len = 0
+    num_samples = len(data_loader.dataset)
+    num_batches = len(data_loader)
     total_acc = 0
     with torch.no_grad():
         for batch in data_loader:
@@ -154,13 +156,13 @@ def eval_model(model: nn.Module,
             y_w = model(batch)
             y = y.squeeze()
             y = y.to(torch.long)
-            total_loss += loss(y_w, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
-            total_len += 1
+            total_loss += loss(y_w, y).item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
                 # torch.max is (values, indices)
-            _, predicted = torch.max(y_w, dim=1) # takes the index of the highest value of each row
-            total_acc += (predicted == y).sum().item()
+            #_, predicted = torch.max(y_w, dim=1) # takes the index of the highest value of each row
+            #predicted = predicted.to(torch.long)
+            total_acc += (y_w.argmax(1) == y).type(torch.float).sum().item()
     # return perplexity and accuracy
-    return 2**(total_loss/(total_len*data_loader.batch_size)), (total_acc/(total_len*data_loader.batch_size))
+    return 2**(total_loss/num_batches), (total_acc/num_samples)
 
 
 
@@ -180,7 +182,6 @@ class TranslationDataset(Dataset):
     def __getitem__(self, index):
         return self.s_matr[index], self.t_matr[index], self.l_vec[index]
 
-
 class FFTranslator(nn.Module):
 
     def __init__(self, dict_len, window_size, embedding_dim):
@@ -190,7 +191,9 @@ class FFTranslator(nn.Module):
         self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out, "relu")
         # concatenate the two outputs... with concat layer
         self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 384, "relu")
-        self.fc_2 = FCLayer(self.fc_1.shape_out, dict_len, "relu")
+        self.drop = torch.nn.Dropout(p=0.2)
+        self.fc_1_1 = FCLayer(self.fc_1.shape_out,384,"relu")
+        self.fc_2 = FCLayer(self.fc_1_1.shape_out, dict_len, "")
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
         s, t, l = item
@@ -202,8 +205,6 @@ class FFTranslator(nn.Module):
         # concatenate the embeddings
         s = torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
         t = torch.flatten(t, start_dim=1)
-        s = torch.transpose(s, 0, 1)
-        t = torch.transpose(t, 0, 1)
         if debug > 1:
             print(s.shape)
         s = self.fc_source.propagate_forward(s)
@@ -213,14 +214,15 @@ class FFTranslator(nn.Module):
         # results in a shape of (batch_size, ...)
         if debug > 1:
             print(t.shape,s.shape)
-        x = torch.cat((s, t), 0)
+        x = torch.cat((s, t), 1)
         if debug > 1:
             print(x.shape)
         x = self.fc_1.propagate_forward(x)
+        x = self.drop(x)
+        x = self.fc_1_1.propagate_forward(x)
         x = self.fc_2.propagate_forward(x)
         # cross-entropy
         #loss = nn.CrossEntropyLoss()
-        x = torch.transpose(x,0,1)
         return x
 
 
@@ -270,7 +272,7 @@ if __name__ == "__main__":
         # create big batches
         train_total_words = sum([len(x) for x in train_data_en]) + len(train_data_en)
         eval_total_words = sum([len(x) for x in eval_data_en]) + len(eval_data_en)
-        windowsize = 5
+        windowsize = 2
         train_batch = Batch(train_data_de, train_data_en, train_total_words, windowsize, voc, voc)
         eval_batch = Batch(eval_data_de, eval_data_en, eval_total_words, windowsize, voc, voc)
 
@@ -291,13 +293,13 @@ if __name__ == "__main__":
     eval_dataset = TranslationDataset(eval_batch.batches)
 
     # create dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size= 128, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size= 128, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size= 200, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size= 200, shuffle=False)
     if debug > 0:
         print("start training...")
     # training
-    model = FFTranslator(train_batch.voc_len, train_batch.windowsize,100)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
-    epochs = 20
+    model = FFTranslator(train_batch.voc_len, train_batch.windowsize,50)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.03)
+    epochs = 500
     checkpoints = [[] for i in range(epochs)]
-    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,1)
+    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,True,checkpoints,1)

@@ -11,23 +11,27 @@ class FCLayer(torch.nn.Module):
         super().__init__()
         self.shape_in = shape_in
         self.shape_out = shape_out
-        self.weights = torch.nn.Parameter(torch.rand(shape_out, shape_in))
+        self.weights = torch.nn.Parameter(torch.empty(shape_in, shape_out))
         # automatically requires grad
         if bias:
-            self.bias = torch.nn.Parameter(torch.rand(shape_out,1))
+            self.bias = torch.nn.Parameter(torch.zeros(shape_out))
         else:
-            self.bias = torch.zeros(shape_out,1)
-        self.activation = activation
+            self.bias = torch.zeros(shape_out)
+        self.acti_vation = activation
         match activation:
             case "relu":
                 # own implementation would just be torch.maximum(0,x)
-                self.activation = torch.relu
+                self.acti_vation = torch.relu
+                torch.nn.init.kaiming_uniform_(self.weights, nonlinearity='relu')
             case "sigmoid":
-                self.activation = torch.sigmoid
+                self.acti_vation = torch.sigmoid
             case "tanh":
-                self.activation = torch.tanh
+                self.acti_vation = torch.tanh
+            case _:
+                self.acti_vation = lambda x: x # id
+                torch.nn.init.xavier_uniform_(self.weights)
 
     def propagate_forward(self, x: torch.Tensor) -> torch.Tensor:
         # output z
-        z = self.weights @ x + self.bias
-        return self.activation(z)
+        z = x @ self.weights + self.bias #xA^T + b, x is a row Vector
+        return self.acti_vation(z)
