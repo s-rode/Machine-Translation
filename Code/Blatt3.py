@@ -12,11 +12,13 @@ class FCLayer(torch.nn.Module):
         self.shape_in = shape_in
         self.shape_out = shape_out
         self.weights = torch.nn.Parameter(torch.rand(shape_out, shape_in))
+        torch.nn.init.xavier_uniform_(self.weights)
         # automatically requires grad
         if bias:
-            self.bias = torch.nn.Parameter(torch.rand(shape_out,1))
+            self.bias = torch.nn.Parameter(torch.rand(shape_out, 1))
+            torch.nn.init.xavier_uniform_(self.bias)
         else:
-            self.bias = torch.zeros(shape_out,1)
+            self.bias = torch.zeros(shape_out, 1)
         self.activation = activation
         match activation:
             case "relu":
@@ -29,5 +31,5 @@ class FCLayer(torch.nn.Module):
 
     def propagate_forward(self, x: torch.Tensor) -> torch.Tensor:
         # output z
-        z = self.weights @ x + self.bias
+        z = x @ self.weights.t() + self.bias.t()
         return self.activation(z)

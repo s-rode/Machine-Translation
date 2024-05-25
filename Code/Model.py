@@ -10,14 +10,15 @@ from Blatt3 import FCLayer
 from Blatt2 import BPE, Dictionary, Batch, FileHandler as FH2
 from Blatt1 import FileHandler as FH1
 
+debug = 0
 
-debug = 1
+
 def load_bpe(bpe_path: str):
     with open(f"../config/{bpe_path}", "rb") as f:
         return pkl.load(f)
 
 
-def save_bpe(text_path_de: str, text_path_en : str, bpe_name: str, iterations: int):
+def save_bpe(text_path_de: str, text_path_en: str, bpe_name: str, iterations: int):
     input_de = FH1.read_file_words(text_path_de)
     input_en = FH1.read_file_words(text_path_en)
     bpe = BPE(FH2.flattenList(input_de + input_en))
@@ -30,6 +31,7 @@ def save_bpe(text_path_de: str, text_path_en : str, bpe_name: str, iterations: i
 def save_model(model: nn.Module, model_name: str):
     torch.save(model, f"../config/{model_name}")
 
+
 def load_model(model_name: str):
     return torch.load(f"../config/{model_name}")
 
@@ -38,11 +40,13 @@ def load_voc(voc_path):
     with open(f"../config/{voc_path}", "rb") as f:
         return pkl.load(f)
 
+
 def load_batch(batch_path):
     with open(f"../config/{batch_path}", "rb") as f:
         return pkl.load(f)
 
-def save_voc(text_path_de: str,text_path_en :str, voc_name: str, bpe):
+
+def save_voc(text_path_de: str, text_path_en: str, voc_name: str, bpe):
     input_de = FH1.read_file_words(text_path_de)
     input_en = FH1.read_file_words(text_path_en)
     dict = Dictionary(bpe.applyBPE(input_de + input_en))
@@ -77,7 +81,7 @@ def training_routine(model: nn.Module,
     lossfunc = nn.CrossEntropyLoss()
     best_perpl = -1
     best_acc = -1
-    max_patience = 5 # maybe change later
+    max_patience = 3  # maybe change later
     patience = max_patience
 
     for epoch in range(epochs):
@@ -88,14 +92,14 @@ def training_routine(model: nn.Module,
 
         # evaluate the model every n epochs and check for stagnation
         if (epoch + 1) % eval_every_n_epochs == 0:
-            eval_perpl,eval_acc  = eval_model(model, eval_dataloader, lossfunc)
+            eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, len(eval_dataloader))
             print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
             # first evaluation
             if best_perpl == -1 or best_acc == -1:
                 best_perpl = eval_perpl
                 best_acc = eval_acc
             # check if the curr perpl and accuracy is smaller
-            if eval_perpl < best_perpl or eval_acc > best_acc: # maybe change to and later
+            if eval_perpl < best_perpl or eval_acc > best_acc:  # maybe change to and later
                 best_perpl = min(best_perpl, eval_perpl)
                 best_acc = max(best_acc, eval_acc)
                 patience = max_patience
@@ -109,12 +113,9 @@ def training_routine(model: nn.Module,
                     patience = max_patience
                 else:
                     # stop training if model isnt improving and we shouldnt halve the lr
-                    print(f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
+                    print(
+                        f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
                     break
-
-
-
-
 
 
 def train_one_epoch(model: nn.Module,
@@ -122,48 +123,54 @@ def train_one_epoch(model: nn.Module,
                     optimizer: torch.optim,
                     checkpoints: list[int],
                     lossfunc: nn.Module, epoch: int):
+    eval_every_n_batches = 10
     # loss calculation here
-    for i,batch in enumerate(dataloader):
-        _,_,y = batch
-        y = y.squeeze()#loss func needs a row vector,
-        y = y.to(torch.long)#coverted to long
+    for i, batch in enumerate(dataloader):
+        model.train()
+        _, _, y = batch
+        y = y.squeeze()  #loss func needs a row vector,
+        y = y.to(torch.long)  #coverted to long
         y_w = model(batch)
         if debug > 1:
-            print(y_w.shape,y.shape)
-        loss = lossfunc(y_w,y)
+            print(y_w.shape, y.shape)
+        loss = lossfunc(y_w, y)
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+        if debug > 2:
+            if i % eval_every_n_batches == 0:
+                # dont eval full dataset every time
+                eval_perpl, eval_acc = eval_model(model, dataloader, lossfunc, 50)
+                print(f"Batch {i}/{len(dataloader)}: Perplexity: {eval_perpl}, Accuracy: {eval_acc}")
         if i in checkpoints:
-            save_model(model,f"model_epoch{epoch}_iter_{i}")
-
-
+            save_model(model, f"model_epoch{epoch}_iter_{i}")
 
 
 def eval_model(model: nn.Module,
                data_loader: DataLoader,
-               loss: nn.Module):
+               loss: nn.Module,
+               number_of_batches: int):
     model.eval()
     # disable gradient calculation
     total_loss = 0
     total_len = 0
     total_acc = 0
     with torch.no_grad():
-        for batch in data_loader:
+        for i, batch in enumerate(data_loader):
+            if i == number_of_batches:
+                break
             _, _, y = batch
             y_w = model(batch)
             y = y.squeeze()
             y = y.to(torch.long)
-            total_loss += loss(y_w, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
+            total_loss += loss(y_w,
+                               y).item()  # total_loss isnt a vector since the function calculates the mean of the losses for a batch
             total_len += 1
-                # torch.max is (values, indices)
-            _, predicted = torch.max(y_w, dim=1) # takes the index of the highest value of each row
+            # torch.max is (values, indices)
+            _, predicted = torch.max(y_w, dim=1)  # takes the index of the highest value of each row
             total_acc += (predicted == y).sum().item()
     # return perplexity and accuracy
-    return 2**(total_loss/(total_len*data_loader.batch_size)), (total_acc/(total_len*data_loader.batch_size))
-
-
-
+    return 2 ** (total_loss / total_len), (total_acc / (total_len * data_loader.batch_size))
 
 
 class TranslationDataset(Dataset):
@@ -188,39 +195,42 @@ class FFTranslator(nn.Module):
         self.embedding = nn.Embedding(dict_len, embedding_dim)
         self.fc_source = FCLayer(embedding_dim * (2 * window_size + 1), 256, "relu")
         self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out, "relu")
-        # concatenate the two outputs... with concat layer
-        self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 384, "relu")
-        self.fc_2 = FCLayer(self.fc_1.shape_out, dict_len, "relu")
+        self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 512, "relu")
+        #self.fc_2 = FCLayer(self.fc_1.shape_out, 256, "relu")
+        self.fc_3 = FCLayer(self.fc_1.shape_out, dict_len, "relu")  # Adding an extra layer
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
-        s, t, l = item
+        s, t, _ = item
         # get embeddings
-        s = self.embedding(s) # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
-        t = self.embedding(t) # => 3 dim
+        s = self.embedding(
+            s)  # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
+        t = self.embedding(t)  # => 3 dim
         if debug > 1:
-            print(s.shape)
+            print(f"embedding shape: {s.shape}")
         # concatenate the embeddings
         s = torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
         t = torch.flatten(t, start_dim=1)
-        s = torch.transpose(s, 0, 1)
-        t = torch.transpose(t, 0, 1)
+        """
+        we could also transpose if our fc layer would multiply W*x^t and not like pytorch x*W^t
+        but (W*x^t)^t = x*W^t so its equivalent 
+        """
         if debug > 1:
-            print(s.shape)
+            print(f"flattened shape: {s.shape} (after transpose)")
         s = self.fc_source.propagate_forward(s)
         t = self.fc_target.propagate_forward(t)
         # concatenating s and t
         # since s and t have shapes (batch_size, n) concatenating them along dim=1
         # results in a shape of (batch_size, ...)
         if debug > 1:
-            print(t.shape,s.shape)
-        x = torch.cat((s, t), 0)
+            print(f"fc shape: {s.shape} {t.shape}")
+        x = torch.cat((s, t), 1)
         if debug > 1:
-            print(x.shape)
+            print(f"concatenated shape: {x.shape}")
         x = self.fc_1.propagate_forward(x)
-        x = self.fc_2.propagate_forward(x)
+        #x = self.fc_2.propagate_forward(x)
+        x = self.fc_3.propagate_forward(x)
         # cross-entropy
         #loss = nn.CrossEntropyLoss()
-        x = torch.transpose(x,0,1)
         return x
 
 
@@ -281,23 +291,29 @@ if __name__ == "__main__":
             pkl.dump(eval_batch, f)
 
     if debug > 4:
-            str_train_batch = Batch.getBatchesWithStrings(train_batch.batches, voc, voc)
-            FH2.saveBatches(str_train_batch, "train_batch.txt", 20)
-            print(str_train_batch)
-
+        str_train_batch = Batch.getBatchesWithStrings(train_batch.batches, voc, voc)
+        FH2.saveBatches(str_train_batch, "train_batch.txt", 20)
+        print(str_train_batch)
 
     # create datasets
     train_dataset = TranslationDataset(train_batch.batches)
     eval_dataset = TranslationDataset(eval_batch.batches)
 
+    if True:
+        # test with smaller dataset
+        indices = torch.arange(0, 10000)
+        train_dataset = torch.utils.data.Subset(train_dataset, indices)
+        eval_dataset = train_dataset
+        print(f"debug: train dataset length: {len(train_dataset)}")
+
     # create dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size= 128, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size= 128, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=128, shuffle=False)
     if debug > 0:
         print("start training...")
     # training
-    model = FFTranslator(train_batch.voc_len, train_batch.windowsize,100)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
-    epochs = 20
+    model = FFTranslator(train_batch.voc_len, train_batch.windowsize, 100)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    epochs = 100
     checkpoints = [[] for i in range(epochs)]
-    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,1)
+    training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, True, checkpoints, 1)
