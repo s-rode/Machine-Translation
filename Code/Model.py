@@ -137,10 +137,10 @@ def train_one_epoch(model: nn.Module,
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        if debug > 2:
+        if debug == -5:
             if i % eval_every_n_batches == 0:
                 # dont eval full dataset every time
-                eval_perpl, eval_acc = eval_model(model, dataloader, lossfunc, 50)
+                eval_perpl, eval_acc = eval_model(model, dataloader, lossfunc, 100)
                 print(f"Batch {i}/{len(dataloader)}: Perplexity: {eval_perpl}, Accuracy: {eval_acc}")
         if i in checkpoints:
             save_model(model, f"model_epoch{epoch}_iter_{i}")
@@ -193,44 +193,30 @@ class FFTranslator(nn.Module):
     def __init__(self, dict_len, window_size, embedding_dim):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_dim)
-        self.fc_source = FCLayer(embedding_dim * (2 * window_size + 1), 256, "relu")
-        self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out, "relu")
-        self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 512, "relu")
-        #self.fc_2 = FCLayer(self.fc_1.shape_out, 256, "relu")
-        self.fc_3 = FCLayer(self.fc_1.shape_out, dict_len, "relu")  # Adding an extra layer
+        self.fc_source = nn.Linear(embedding_dim * (2 * window_size + 1), 256)
+        self.fc_target = nn.Linear(embedding_dim * window_size, self.fc_source.out_features)
+        self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, 512)
+        self.fc_3 = nn.Linear(self.fc_1.out_features, dict_len)
+        # init with xavier
+        nn.init.xavier_uniform_(self.fc_source.weight)
+        nn.init.xavier_uniform_(self.fc_target.weight)
+        nn.init.xavier_uniform_(self.fc_1.weight)
+        nn.init.xavier_uniform_(self.fc_3.weight)
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
         s, t, _ = item
         # get embeddings
-        s = self.embedding(
-            s)  # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
-        t = self.embedding(t)  # => 3 dim
-        if debug > 1:
-            print(f"embedding shape: {s.shape}")
+        s = self.embedding(s)
+        t = self.embedding(t)
         # concatenate the embeddings
-        s = torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
+        s = torch.flatten(s, start_dim=1)
         t = torch.flatten(t, start_dim=1)
-        """
-        we could also transpose if our fc layer would multiply W*x^t and not like pytorch x*W^t
-        but (W*x^t)^t = x*W^t so its equivalent 
-        """
-        if debug > 1:
-            print(f"flattened shape: {s.shape} (after transpose)")
-        s = self.fc_source.propagate_forward(s)
-        t = self.fc_target.propagate_forward(t)
+        s = torch.relu(self.fc_source(s))
+        t = torch.relu(self.fc_target(t))
         # concatenating s and t
-        # since s and t have shapes (batch_size, n) concatenating them along dim=1
-        # results in a shape of (batch_size, ...)
-        if debug > 1:
-            print(f"fc shape: {s.shape} {t.shape}")
         x = torch.cat((s, t), 1)
-        if debug > 1:
-            print(f"concatenated shape: {x.shape}")
-        x = self.fc_1.propagate_forward(x)
-        #x = self.fc_2.propagate_forward(x)
-        x = self.fc_3.propagate_forward(x)
-        # cross-entropy
-        #loss = nn.CrossEntropyLoss()
+        x = torch.relu(self.fc_1(x))
+        x = torch.relu(self.fc_3(x))
         return x
 
 
@@ -275,6 +261,7 @@ if __name__ == "__main__":
         train_data_en = voc.filterInput(bpe.applyBPE(raw_train_data_en))
         eval_data_de = voc.filterInput(bpe.applyBPE(raw_eval_data_de))
         eval_data_en = voc.filterInput(bpe.applyBPE(raw_eval_data_en))
+
         if debug > 0:
             print("creating batches...")
         # create big batches
@@ -290,7 +277,7 @@ if __name__ == "__main__":
         with open(f"../config/eval_batch.pkl", "wb") as f:
             pkl.dump(eval_batch, f)
 
-    if debug > 4:
+    if debug > 5:
         str_train_batch = Batch.getBatchesWithStrings(train_batch.batches, voc, voc)
         FH2.saveBatches(str_train_batch, "train_batch.txt", 20)
         print(str_train_batch)
@@ -299,7 +286,7 @@ if __name__ == "__main__":
     train_dataset = TranslationDataset(train_batch.batches)
     eval_dataset = TranslationDataset(eval_batch.batches)
 
-    if True:
+    if False:
         # test with smaller dataset
         indices = torch.arange(0, 10000)
         train_dataset = torch.utils.data.Subset(train_dataset, indices)
