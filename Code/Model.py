@@ -29,11 +29,12 @@ def save_bpe(text_path_de: str, text_path_en: str, bpe_name: str, iterations: in
 
 
 def save_model(model: nn.Module, model_name: str):
-    torch.save(model, f"../config/{model_name}")
+    print(f"saving model to {model_name}")
+    torch.save(model, f"../config/models/{model_name}")
 
 
 def load_model(model_name: str):
-    return torch.load(f"../config/{model_name}")
+    return torch.load(f"../config/models/{model_name}")
 
 
 def load_voc(voc_path):
@@ -88,8 +89,8 @@ def training_routine(model: nn.Module,
         # set model to training mode to ensure that the gradient tracking is on
         model.train()
         print(f"Epoch {epoch + 1}")
-        train_one_epoch(model, train_dataloader, optimizer, checkpoints[epoch], lossfunc, epoch)
-
+        train_one_epoch(model, train_dataloader, eval_dataloader, optimizer, checkpoints[epoch], lossfunc, epoch, int(len(train_dataloader)/4), halve_lr)
+        """
         # evaluate the model every n epochs and check for stagnation
         if (epoch + 1) % eval_every_n_epochs == 0:
             eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, len(eval_dataloader))
@@ -115,15 +116,20 @@ def training_routine(model: nn.Module,
                     # stop training if model isnt improving and we shouldnt halve the lr
                     print(
                         f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
-                    break
+                    break"""
 
 
 def train_one_epoch(model: nn.Module,
                     dataloader: DataLoader,
+                    eval_dataloader: DataLoader,
                     optimizer: torch.optim,
                     checkpoints: list[int],
-                    lossfunc: nn.Module, epoch: int):
-    eval_every_n_batches = 10
+                    lossfunc: nn.Module, epoch: int, eval_every_n_batches: int, halve_lr: bool = True, ):
+    best_perpl = -1
+    best_acc = -1
+    max_patience = 3  # maybe change later
+    patience = max_patience
+
     # loss calculation here
     for i, batch in enumerate(dataloader):
         model.train()
@@ -137,11 +143,31 @@ def train_one_epoch(model: nn.Module,
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        if debug == -5:
-            if i % eval_every_n_batches == 0:
-                # dont eval full dataset every time
-                eval_perpl, eval_acc = eval_model(model, dataloader, lossfunc, 100)
-                print(f"Batch {i}/{len(dataloader)}: Perplexity: {eval_perpl}, Accuracy: {eval_acc}")
+        if i % eval_every_n_batches == 0:
+            eval_perpl, eval_acc = eval_model(model, dataloader, lossfunc, 500)
+            print(f"Batch: {i}/{len(dataloader)} Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
+            # first evaluation
+            if best_perpl == -1 or best_acc == -1:
+                best_perpl = eval_perpl
+                best_acc = eval_acc
+            # check if the curr perpl and accuracy is smaller
+            if eval_perpl < best_perpl or eval_acc > best_acc:  # maybe change to and later
+                best_perpl = min(best_perpl, eval_perpl)
+                best_acc = max(best_acc, eval_acc)
+                patience = max_patience
+            else:
+                patience -= 1
+            if patience <= 0:
+                if halve_lr:
+                    # optimizer.param_groups is a list of the different weight groups, since we only have one group..
+                    optimizer.param_groups[0]["lr"] /= 2
+                    print(f"Reducing learning rate to {optimizer.param_groups[0]['lr']}")
+                    patience = max_patience
+                else:
+                    # stop training if model isnt improving and we shouldnt halve the lr
+                    print(
+                        f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
+                    break
         if i in checkpoints:
             save_model(model, f"model_epoch{epoch}_iter_{i}")
 
@@ -163,14 +189,14 @@ def eval_model(model: nn.Module,
             y_w = model(batch)
             y = y.squeeze()
             y = y.to(torch.long)
-            total_loss += loss(y_w,
-                               y).item()  # total_loss isnt a vector since the function calculates the mean of the losses for a batch
+            total_loss += loss(y_w, y).item()  # total_loss isnt a vector since the function calculates the mean of the losses for a batch
             total_len += 1
             # torch.max is (values, indices)
             _, predicted = torch.max(y_w, dim=1)  # takes the index of the highest value of each row
             total_acc += (predicted == y).sum().item()
-    # return perplexity and accuracy
-    return 2 ** (total_loss / total_len), (total_acc / (total_len * data_loader.batch_size))
+    # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
+    perplexity = np.exp(total_loss / total_len)
+    return perplexity, (total_acc / (total_len * data_loader.batch_size))
 
 
 class TranslationDataset(Dataset):
@@ -195,13 +221,13 @@ class FFTranslator(nn.Module):
         self.embedding = nn.Embedding(dict_len, embedding_dim)
         self.fc_source = nn.Linear(embedding_dim * (2 * window_size + 1), 256)
         self.fc_target = nn.Linear(embedding_dim * window_size, self.fc_source.out_features)
-        self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, 512)
+        self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, 384)
         self.fc_3 = nn.Linear(self.fc_1.out_features, dict_len)
         # init with xavier
-        nn.init.xavier_uniform_(self.fc_source.weight)
-        nn.init.xavier_uniform_(self.fc_target.weight)
-        nn.init.xavier_uniform_(self.fc_1.weight)
-        nn.init.xavier_uniform_(self.fc_3.weight)
+        nn.init.kaiming_uniform_(self.fc_source.weight)
+        nn.init.kaiming_uniform_(self.fc_target.weight)
+        nn.init.kaiming_uniform_(self.fc_1.weight)
+        nn.init.kaiming_uniform_(self.fc_3.weight)
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
         s, t, _ = item
@@ -216,7 +242,7 @@ class FFTranslator(nn.Module):
         # concatenating s and t
         x = torch.cat((s, t), 1)
         x = torch.relu(self.fc_1(x))
-        x = torch.relu(self.fc_3(x))
+        x = self.fc_3(x)
         return x
 
 
@@ -294,13 +320,14 @@ if __name__ == "__main__":
         print(f"debug: train dataset length: {len(train_dataset)}")
 
     # create dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=128, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=32, shuffle=False)
     if debug > 0:
         print("start training...")
     # training
-    model = FFTranslator(train_batch.voc_len, train_batch.windowsize, 100)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    model = FFTranslator(train_batch.voc_len, train_batch.windowsize, 50)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.07)
     epochs = 100
-    checkpoints = [[] for i in range(epochs)]
+    #checkpoints = [[] for i in range(epochs)]
+    checkpoints = [[1] if i % 11 == 0 else [] for i in range(epochs)]
     training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, True, checkpoints, 1)
