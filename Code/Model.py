@@ -80,43 +80,12 @@ def training_routine(model: nn.Module,
                      checkpoints: list[list[int]],
                      eval_every_n_epochs: int):
     lossfunc = nn.CrossEntropyLoss()
-    best_perpl = -1
-    best_acc = -1
-    max_patience = 3  # maybe change later
-    patience = max_patience
 
     for epoch in range(epochs):
         # set model to training mode to ensure that the gradient tracking is on
         model.train()
         print(f"Epoch {epoch + 1}")
         train_one_epoch(model, train_dataloader, eval_dataloader, optimizer, checkpoints[epoch], lossfunc, epoch, int(len(train_dataloader)/4), halve_lr)
-        """
-        # evaluate the model every n epochs and check for stagnation
-        if (epoch + 1) % eval_every_n_epochs == 0:
-            eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, len(eval_dataloader))
-            print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
-            # first evaluation
-            if best_perpl == -1 or best_acc == -1:
-                best_perpl = eval_perpl
-                best_acc = eval_acc
-            # check if the curr perpl and accuracy is smaller
-            if eval_perpl < best_perpl or eval_acc > best_acc:  # maybe change to and later
-                best_perpl = min(best_perpl, eval_perpl)
-                best_acc = max(best_acc, eval_acc)
-                patience = max_patience
-            else:
-                patience -= 1
-            if patience <= 0:
-                if halve_lr:
-                    # optimizer.param_groups is a list of the different weight groups, since we only have one group..
-                    optimizer.param_groups[0]["lr"] /= 2
-                    print(f"Reducing learning rate to {optimizer.param_groups[0]['lr']}")
-                    patience = max_patience
-                else:
-                    # stop training if model isnt improving and we shouldnt halve the lr
-                    print(
-                        f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
-                    break"""
 
 
 def train_one_epoch(model: nn.Module,
