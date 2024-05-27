@@ -103,9 +103,12 @@ def training_routine(model: nn.Module,
                      halve_lr: bool,
                      checkpoints: list[list[int]],
                      eval_every_n_batches: int):
-    loss_func = nn.CrossEntropyLoss()
+    loss_func = nn.CrossEntropyLoss(reduction="sum")
     for name, param in model.named_parameters():
         print(f"Parameter name: {name}, Shape: {param.shape}")
+    n = sum(p.numel() for p in model.parameters())
+    print(f"Number of total parameters: {n}")
+
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}")
         train_one_epoch(model, train_dataloader, eval_dataloader, optimizer, checkpoints[epoch+1], loss_func, epoch, eval_every_n_batches, halve_lr)
@@ -128,7 +131,7 @@ def train_one_epoch(model: nn.Module,
         # loss func needs a row vector converted to long
         y = y.squeeze().to(torch.long)
         y_w = model(batch)
-        loss = lossfunc(y_w, y)
+        loss = lossfunc(y_w, y)/y.shape[0] # divide by batch size cause we used summed loss
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -154,7 +157,7 @@ def train_one_epoch(model: nn.Module,
                             f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
                         break
         if i in checkpoints:
-            save_model(model, f"model_epoch_{epoch}_batch_{i}")
+            save_model(model, f"model_epoch_{epoch+1}_batch_{i}")
 
 
 def eval_model(model: nn.Module,
@@ -165,7 +168,6 @@ def eval_model(model: nn.Module,
     # disable gradient calculation
     total_loss = 0
     num_samples = len(data_loader.dataset) # number of rows
-    num_batches = len(data_loader)
     total_acc = 0
     with torch.no_grad():
         for i, batch in enumerate(data_loader):
@@ -181,7 +183,7 @@ def eval_model(model: nn.Module,
             """
             total_acc += (y_w.argmax(1) == y).type(torch.float).sum().item()
     # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
-    return np.exp(total_loss/num_batches), (total_acc/num_samples)
+    return np.exp(total_loss/num_samples), (total_acc/num_samples)
 
 
 class TranslationDataset(Dataset):
@@ -218,10 +220,6 @@ class FFTranslator(nn.Module):
             self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, FC_OUT_1)
             self.fc_3 = nn.Linear(self.fc_1.out_features, dict_len)
 
-            torch.nn.init.kaiming_uniform_(self.fc_source.weight, nonlinearity="relu")
-            torch.nn.init.kaiming_uniform_(self.fc_target.weight, nonlinearity="relu")
-            torch.nn.init.kaiming_uniform_(self.fc_1.weight, nonlinearity="relu")
-            torch.nn.init.xavier_uniform_(self.fc_3.weight)
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
         s, t, _ = item
         # get embeddings
@@ -251,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_batch", type=str, help="name of training batch file")
     parser.add_argument("--eval_batch", type=str, help="name of evaluation batch file")
     parser.add_argument("--model", type=str, help="name of model file")
+    parser.add_argument("--should_train", action="store_true", help="train the model?")
     args = parser.parse_args()
 
     # loading hyperparameter
@@ -258,7 +257,7 @@ if __name__ == "__main__":
         hyp_param = yaml.safe_load(file)
         EMBEDDING_DIM = hyp_param["EMBEDDING_DIM"]
         EPOCHS = hyp_param["EPOCHS"]
-        CHECKPOINTS = [hyp_param["CHECKPOINTS_WBATCH"] if i in hyp_param["CHECKPOINTS_WEPOCH"] else [] for i in range(EPOCHS)]
+        CHECKPOINTS = [hyp_param["CHECKPOINTS_WBATCH"] if i in hyp_param["CHECKPOINTS_WEPOCH"] else [] for i in range(EPOCHS+1)]
         LEARNING_RATE = hyp_param["LEARNING_RATE"]
         EVAL_EVERY_N_BATCHES = hyp_param["EVAL_EVERY_N_BATCHES"]
         OWN_LINEAR = hyp_param["OWN_LINEAR"]
@@ -307,7 +306,11 @@ if __name__ == "__main__":
     else:
         model = FFTranslator(train_batch.voc_len, train_batch.windowsize, EMBEDDING_DIM)
     # training
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
-    epochs = EPOCHS
-    checkpoints = CHECKPOINTS
-    training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints, EVAL_EVERY_N_BATCHES)
+    if args.should_train:
+        optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+        epochs = EPOCHS
+        checkpoints = CHECKPOINTS
+        training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints,
+                         EVAL_EVERY_N_BATCHES)
+    perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(), len(eval_dataloader))
+    print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")

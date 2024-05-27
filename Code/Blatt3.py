@@ -2,7 +2,7 @@ import torch
 
 
 class FCLayer(torch.nn.Module):
-    def __init__(self, shape_in: int, shape_out: int, weight_init: str = "he", bias: bool = True):
+    def __init__(self, shape_in: int, shape_out: int, weight_init: str = "xavier", bias: bool = True):
         super().__init__()
         self.shape_in = shape_in
         self.shape_out = shape_out
