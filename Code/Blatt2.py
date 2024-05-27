@@ -189,7 +189,7 @@ class Dictionary:
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
         dictdict = {}
-        counter = 3
+        counter = 4
         dictdict["<s>"] = 0
         dictdict["</s>"] = 1
         dictdict["<unk>"] = 2

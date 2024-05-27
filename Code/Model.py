@@ -5,22 +5,43 @@ import torch.nn as nn
 import pickle as pkl
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import yaml
 
 from Blatt3 import FCLayer
-from Blatt2 import BPE, Dictionary, Batch, FileHandler as FH2
-from Blatt1 import FileHandler as FH1
+from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
+from Blatt1 import FileHandler as fh1
+
+debug = 0
+
+# hyperparameters
+EMBEDDING_DIM = None
+EPOCHS = None
+CHECKPOINTS_WBATCH = None
+CHECKPOINTS_WEPOCH = None
+LEARNING_RATE = None
+EVAL_EVERY_N_BATCHES = None
+OWN_LINEAR = None
+WINDOW_SIZE = None
+FC_OUT_ST = None
+FC_OUT_1 = None
+BATCH_SIZE_TRAIN = None
+BATCH_SIZE_EVAL = None
+BPE_MERGES = None
+PATIENCE = None
+DROPOUT = None
+HALVE_LR = None
 
 
-debug = 1
+
 def load_bpe(bpe_path: str):
     with open(f"../config/{bpe_path}", "rb") as f:
         return pkl.load(f)
 
 
-def save_bpe(text_path_de: str, text_path_en : str, bpe_name: str, iterations: int):
-    input_de = FH1.read_file_words(text_path_de)
-    input_en = FH1.read_file_words(text_path_en)
-    bpe = BPE(FH2.flattenList(input_de + input_en))
+def save_bpe(text_path_de: str, text_path_en: str, bpe_name: str, iterations: int):
+    input_de = fh1.read_file_words(text_path_de)
+    input_en = fh1.read_file_words(text_path_en)
+    bpe = BPE(fh2.flattenList(input_de + input_en))
     bpe.learnBPE(iterations)
     with open(f"../config/{bpe_name}", "wb") as f:
         pkl.dump(bpe, f)
@@ -28,42 +49,50 @@ def save_bpe(text_path_de: str, text_path_en : str, bpe_name: str, iterations: i
 
 
 def save_model(model: nn.Module, model_name: str):
-    torch.save(model, f"../config/{model_name}")
+    print(f"saving model to {model_name}")
+    torch.save(model, f"../config/models/{model_name}")
+
 
 def load_model(model_name: str):
-    return torch.load(f"../config/{model_name}")
+    return torch.load(f"../config/models/{model_name}")
 
 
 def load_voc(voc_path):
     with open(f"../config/{voc_path}", "rb") as f:
         return pkl.load(f)
 
+
 def load_batch(batch_path):
     with open(f"../config/{batch_path}", "rb") as f:
         return pkl.load(f)
 
-def save_voc(text_path_de: str,text_path_en :str, voc_name: str, bpe):
-    input_de = FH1.read_file_words(text_path_de)
-    input_en = FH1.read_file_words(text_path_en)
+
+def save_batch(bpe: BPE, voc: Dictionary, args_de, args_en, window_size, batch_name: str):
+    raw_data_de = fh1.read_file_words(args_de)
+    raw_data_en = fh1.read_file_words(args_en)
+    if debug > 0:
+        print("applying bpe...")
+    # apply BPE to data and apply vocabulary
+    data_de = voc.filterInput(bpe.applyBPE(raw_data_de))
+    data_en = voc.filterInput(bpe.applyBPE(raw_data_en))
+    if debug > 0:
+        print("creating batches...")
+    # create big batches
+    total_words = sum([len(x) for x in data_en]) + len(data_en)
+    batch = Batch(data_de, data_en, total_words, window_size, voc, voc)
+    # saving batches for next time
+    with open(f"../config/{batch_name}", "wb") as f:
+        pkl.dump(batch, f)
+    return batch
+
+
+def save_voc(text_path_de: str, text_path_en: str, voc_name: str, bpe):
+    input_de = fh1.read_file_words(text_path_de)
+    input_en = fh1.read_file_words(text_path_en)
     dict = Dictionary(bpe.applyBPE(input_de + input_en))
     with open(f"../config/{voc_name}", "wb") as f:
         pkl.dump(dict, f)
     return dict
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--text", type=str, help="path to text file")
-    parser.add_argument("--bpe", type=str, help="path to bpe file")
-    parser.add_argument("--voc", type=str, help="path to voc file")
-    args = parser.parse_args()
-    #bpe = saveBPE(args.text, args.bpe, 20)
-    #print(bpe.getMerges())
-    #bpe = load_bpe(args.bpe)
-    #voc = saveVoc(args.text, args.voc, bpe)
-    #voc = load_voc(args.voc)
-    #print(voc.getDictionary())
-    print(torch.flatten(torch.Tensor([[1, 2], [3, 4]]), start_dim=0))
 
 
 def training_routine(model: nn.Module,
@@ -73,97 +102,88 @@ def training_routine(model: nn.Module,
                      epochs: int,
                      halve_lr: bool,
                      checkpoints: list[list[int]],
-                     eval_every_n_epochs: int):
-    lossfunc = nn.CrossEntropyLoss()
-    best_perpl = -1
-    best_acc = -1
-    max_patience = 5 # maybe change later
-    patience = max_patience
+                     eval_every_n_batches: int):
+    loss_func = nn.CrossEntropyLoss(reduction="sum")
+    for name, param in model.named_parameters():
+        print(f"Parameter name: {name}, Shape: {param.shape}")
+    n = sum(p.numel() for p in model.parameters())
+    print(f"Number of total parameters: {n}")
 
     for epoch in range(epochs):
-        # set model to training mode to ensure that the gradient tracking is on
-        model.train()
         print(f"Epoch {epoch + 1}")
-        train_one_epoch(model, train_dataloader, optimizer, checkpoints[epoch], lossfunc, epoch)
-
-        # evaluate the model every n epochs and check for stagnation
-        if (epoch + 1) % eval_every_n_epochs == 0:
-            eval_perpl,eval_acc  = eval_model(model, eval_dataloader, lossfunc)
-            print(f"Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
-            # first evaluation
-            if best_perpl == -1 or best_acc == -1:
-                best_perpl = eval_perpl
-                best_acc = eval_acc
-            # check if the curr perpl and accuracy is smaller
-            if eval_perpl < best_perpl or eval_acc > best_acc: # maybe change to and later
-                best_perpl = min(best_perpl, eval_perpl)
-                best_acc = max(best_acc, eval_acc)
-                patience = max_patience
-            else:
-                patience -= 1
-            if patience <= 0:
-                if halve_lr:
-                    # optimizer.param_groups is a list of the different weight groups, since we only have one group..
-                    optimizer.param_groups[0]["lr"] /= 2
-                    print(f"Reducing learning rate to {optimizer.param_groups[0]['lr']}")
-                    patience = max_patience
-                else:
-                    # stop training if model isnt improving and we shouldnt halve the lr
-                    print(f"Stopping training, model not improving. Best perplexity: {best_perpl}, Best accuracy: {best_acc}, Epoch: {epoch + 1}")
-                    break
-
-
-
-
+        train_one_epoch(model, train_dataloader, eval_dataloader, optimizer, checkpoints[epoch+1], loss_func, epoch, eval_every_n_batches, halve_lr)
 
 
 def train_one_epoch(model: nn.Module,
                     dataloader: DataLoader,
+                    eval_dataloader: DataLoader,
                     optimizer: torch.optim,
                     checkpoints: list[int],
-                    lossfunc: nn.Module, epoch: int):
-    # loss calculation here
-    for i,batch in enumerate(dataloader):
-        _,_,y = batch
-        y = y.squeeze()#loss func needs a row vector,
-        y = y.to(torch.long)#coverted to long
+                    lossfunc: nn.Module, epoch: int, eval_every_n_batches: int, halve_lr: bool = True):
+    best_perpl = -1
+    max_patience = PATIENCE  # maybe change later
+    patience = max_patience
+
+    for i, batch in enumerate(dataloader):
+        # set model to training mode to ensure that the gradient tracking is on
+        model.train()
+        _, _, y = batch
+        # loss func needs a row vector converted to long
+        y = y.squeeze().to(torch.long)
         y_w = model(batch)
-        if debug > 1:
-            print(y_w.shape,y.shape)
-        loss = lossfunc(y_w,y)
+        loss = lossfunc(y_w, y)/y.shape[0] # divide by batch size cause we used summed loss
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+        # evaluate every n updates
+        if i % eval_every_n_batches == 0:
+            eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, len(eval_dataloader))
+            print(f"Batch: {i}/{len(dataloader)} Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
+            # check if the current perplexity is still better
+            if eval_perpl < best_perpl or best_perpl == -1:
+                best_perpl = eval_perpl
+                patience = max_patience
+            else:
+                patience -= 1
+                if patience <= 0:
+                    if halve_lr:
+                        # optimizer.param_groups is a list of the different weight groups, but we only have one group
+                        optimizer.param_groups[0]["lr"] /= 2
+                        print(f"Reducing learning rate to {optimizer.param_groups[0]['lr']}")
+                        patience = max_patience
+                    else:
+                        # stop training if model isn't improving and we shouldn't halve the lr
+                        print(
+                            f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
+                        break
         if i in checkpoints:
-            save_model(model,f"model_epoch{epoch}_iter_{i}")
-
-
+            save_model(model, f"model_epoch_{epoch+1}_batch_{i}")
 
 
 def eval_model(model: nn.Module,
                data_loader: DataLoader,
-               loss: nn.Module):
+               loss: nn.Module,
+               number_of_batches: int):
     model.eval()
     # disable gradient calculation
     total_loss = 0
-    total_len = 0
+    num_samples = len(data_loader.dataset) # number of rows
     total_acc = 0
     with torch.no_grad():
-        for batch in data_loader:
+        for i, batch in enumerate(data_loader):
+            if i == number_of_batches:
+                break
             _, _, y = batch
             y_w = model(batch)
-            y = y.squeeze()
-            y = y.to(torch.long)
-            total_loss += loss(y_w, y).sum().item() # total_loss is a vector now, so we have to add the losses and divide through batchsize
-            total_len += 1
-                # torch.max is (values, indices)
-            _, predicted = torch.max(y_w, dim=1) # takes the index of the highest value of each row
-            total_acc += (predicted == y).sum().item()
-    # return perplexity and accuracy
-    return 2**(total_loss/(total_len*data_loader.batch_size)), (total_acc/(total_len*data_loader.batch_size))
-
-
-
+            # loss func needs a row vector converted to long (it was a column vector)
+            y = y.squeeze().to(torch.long)
+            total_loss += loss(y_w, y).item()
+            """ argmax(1) returns the arg max for each row 
+                and y_w.argmax(1) == y returns a boolean tensor and we sum the true values
+            """
+            total_acc += (y_w.argmax(1) == y).type(torch.float).sum().item()
+    # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
+    return np.exp(total_loss/num_samples), (total_acc/num_samples)
 
 
 class TranslationDataset(Dataset):
@@ -182,45 +202,39 @@ class TranslationDataset(Dataset):
 
 
 class FFTranslator(nn.Module):
-
     def __init__(self, dict_len, window_size, embedding_dim):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_dim)
-        self.fc_source = FCLayer(embedding_dim * (2 * window_size + 1), 256, "relu")
-        self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out, "relu")
-        # concatenate the two outputs... with concat layer
-        self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, 384, "relu")
-        self.fc_2 = FCLayer(self.fc_1.shape_out, dict_len, "relu")
+        if DROPOUT:
+            self.drop = nn.Dropout(p=0.1)
+        else:
+            self.drop = nn.Identity()
+        if OWN_LINEAR:
+            self.fc_source = FCLayer(embedding_dim * (2 * window_size + 1), FC_OUT_ST)
+            self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out)
+            self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, FC_OUT_1)
+            self.fc_3 = FCLayer(self.fc_1.shape_out, dict_len, "xavier")
+        else:
+            self.fc_source = nn.Linear(embedding_dim * (2 * window_size + 1), FC_OUT_ST)
+            self.fc_target = nn.Linear(embedding_dim * window_size, self.fc_source.out_features)
+            self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, FC_OUT_1)
+            self.fc_3 = nn.Linear(self.fc_1.out_features, dict_len)
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
-        s, t, l = item
+        s, t, _ = item
         # get embeddings
-        s = self.embedding(s) # embedding size stays the same, input is now a matrix of values, every value gets replaced by a vector
-        t = self.embedding(t) # => 3 dim
-        if debug > 1:
-            print(s.shape)
+        s = self.embedding(s)
+        t = self.embedding(t)
         # concatenate the embeddings
-        s = torch.flatten(s, start_dim=1)  # concatenating the embedding vectors of a row (which is the inner dimension)
+        s = torch.flatten(s, start_dim=1)
         t = torch.flatten(t, start_dim=1)
-        s = torch.transpose(s, 0, 1)
-        t = torch.transpose(t, 0, 1)
-        if debug > 1:
-            print(s.shape)
-        s = self.fc_source.propagate_forward(s)
-        t = self.fc_target.propagate_forward(t)
+        s = self.drop(torch.relu(self.fc_source(s)))
+        t = self.drop(torch.relu(self.fc_target(t)))
         # concatenating s and t
-        # since s and t have shapes (batch_size, n) concatenating them along dim=1
-        # results in a shape of (batch_size, ...)
-        if debug > 1:
-            print(t.shape,s.shape)
-        x = torch.cat((s, t), 0)
-        if debug > 1:
-            print(x.shape)
-        x = self.fc_1.propagate_forward(x)
-        x = self.fc_2.propagate_forward(x)
-        # cross-entropy
-        #loss = nn.CrossEntropyLoss()
-        x = torch.transpose(x,0,1)
+        x = torch.cat((s, t), 1)
+        x = self.drop(torch.relu(self.fc_1(x)))
+        # no activation
+        x = self.fc_3(x)
         return x
 
 
@@ -234,13 +248,34 @@ if __name__ == "__main__":
     parser.add_argument("--voc", type=str, help="name of voc file")
     parser.add_argument("--train_batch", type=str, help="name of training batch file")
     parser.add_argument("--eval_batch", type=str, help="name of evaluation batch file")
+    parser.add_argument("--model", type=str, help="name of model file")
+    parser.add_argument("--should_train", action="store_true", help="train the model?")
     args = parser.parse_args()
+
+    # loading hyperparameter
+    with open('../config/hyperparameter.yml', 'r') as file:
+        hyp_param = yaml.safe_load(file)
+        EMBEDDING_DIM = hyp_param["EMBEDDING_DIM"]
+        EPOCHS = hyp_param["EPOCHS"]
+        CHECKPOINTS = [hyp_param["CHECKPOINTS_WBATCH"] if i in hyp_param["CHECKPOINTS_WEPOCH"] else [] for i in range(EPOCHS+1)]
+        LEARNING_RATE = hyp_param["LEARNING_RATE"]
+        EVAL_EVERY_N_BATCHES = hyp_param["EVAL_EVERY_N_BATCHES"]
+        OWN_LINEAR = hyp_param["OWN_LINEAR"]
+        WINDOW_SIZE = hyp_param["WINDOW_SIZE"]
+        FC_OUT_ST = hyp_param["FC_OUT_ST"]
+        FC_OUT_1 = hyp_param["FC_OUT_1"]
+        BATCH_SIZE_TRAIN = hyp_param["BATCH_SIZE_TRAIN"]
+        BATCH_SIZE_EVAL = hyp_param["BATCH_SIZE_EVAL"]
+        BPE_MERGES = hyp_param["BPE_MERGES"]
+        PATIENCE = hyp_param["PATIENCE"]
+        DROPOUT = hyp_param["DROPOUT"]
+        HALVE_LR = hyp_param["HALVE_LR"]
 
     # load or create BPE
     if args.bpe is not None:
         bpe = load_bpe(args.bpe)
     else:
-        bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", 7000)
+        bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", BPE_MERGES)
 
     # load or create vocabulary
     if args.voc is not None:
@@ -253,51 +288,29 @@ if __name__ == "__main__":
         train_batch = load_batch(args.train_batch)
         eval_batch = load_batch(args.eval_batch)
     else:
-        # load training and evaluation data
-        raw_train_data_de = FH1.read_file_words(args.train_de)
-        raw_train_data_en = FH1.read_file_words(args.train_en)
-        raw_eval_data_de = FH1.read_file_words(args.eval_de)
-        raw_eval_data_en = FH1.read_file_words(args.eval_en)
-        if debug > 0:
-            print("applying bpe...")
-        # apply BPE to data and apply vocabulary
-        train_data_de = voc.filterInput(bpe.applyBPE(raw_train_data_de))
-        train_data_en = voc.filterInput(bpe.applyBPE(raw_train_data_en))
-        eval_data_de = voc.filterInput(bpe.applyBPE(raw_eval_data_de))
-        eval_data_en = voc.filterInput(bpe.applyBPE(raw_eval_data_en))
-        if debug > 0:
-            print("creating batches...")
-        # create big batches
-        train_total_words = sum([len(x) for x in train_data_en]) + len(train_data_en)
-        eval_total_words = sum([len(x) for x in eval_data_en]) + len(eval_data_en)
-        windowsize = 5
-        train_batch = Batch(train_data_de, train_data_en, train_total_words, windowsize, voc, voc)
-        eval_batch = Batch(eval_data_de, eval_data_en, eval_total_words, windowsize, voc, voc)
-
-        # saving batches for next time
-        with open(f"../config/train_batch.pkl", "wb") as f:
-            pkl.dump(train_batch, f)
-        with open(f"../config/eval_batch.pkl", "wb") as f:
-            pkl.dump(eval_batch, f)
-
-    if debug > 4:
-            str_train_batch = Batch.getBatchesWithStrings(train_batch.batches, voc, voc)
-            FH2.saveBatches(str_train_batch, "train_batch.txt", 20)
-            print(str_train_batch)
-
+        train_batch = save_batch(bpe, voc, args.train_de, args.train_en, WINDOW_SIZE, "train_batch.pkl")
+        eval_batch = save_batch(bpe, voc, args.eval_de, args.eval_en, WINDOW_SIZE, "eval_batch.pkl")
 
     # create datasets
     train_dataset = TranslationDataset(train_batch.batches)
     eval_dataset = TranslationDataset(eval_batch.batches)
 
     # create dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size= 128, shuffle=True)
-    eval_dataloader = DataLoader(eval_dataset, batch_size= 128, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE_TRAIN, shuffle=True)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=BATCH_SIZE_EVAL, shuffle=False)
     if debug > 0:
         print("start training...")
+    # create model
+    if args.model is not None:
+        model = load_model(args.model)
+    else:
+        model = FFTranslator(train_batch.voc_len, train_batch.windowsize, EMBEDDING_DIM)
     # training
-    model = FFTranslator(train_batch.voc_len, train_batch.windowsize,100)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
-    epochs = 20
-    checkpoints = [[] for i in range(epochs)]
-    training_routine(model,train_dataloader,eval_dataloader,optimizer,epochs,False,checkpoints,1)
+    if args.should_train:
+        optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+        epochs = EPOCHS
+        checkpoints = CHECKPOINTS
+        training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints,
+                         EVAL_EVERY_N_BATCHES)
+    perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(), len(eval_dataloader))
+    print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
