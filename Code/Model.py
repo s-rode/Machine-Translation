@@ -134,7 +134,7 @@ def train_one_epoch(model: nn.Module,
         optimizer.zero_grad()
         # evaluate every n updates
         if i % eval_every_n_batches == 0:
-            eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, 500)
+            eval_perpl, eval_acc = eval_model(model, eval_dataloader, lossfunc, len(eval_dataloader))
             print(f"Batch: {i}/{len(dataloader)} Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
             # check if the current perplexity is still better
             if eval_perpl < best_perpl or best_perpl == -1:
