@@ -164,7 +164,7 @@ def eval_model(model: nn.Module,
     model.eval()
     # disable gradient calculation
     total_loss = 0
-    num_samples = len(data_loader.dataset)
+    num_samples = len(data_loader.dataset) # number of rows
     num_batches = len(data_loader)
     total_acc = 0
     with torch.no_grad():
@@ -173,8 +173,12 @@ def eval_model(model: nn.Module,
                 break
             _, _, y = batch
             y_w = model(batch)
+            # loss func needs a row vector converted to long (it was a column vector)
             y = y.squeeze().to(torch.long)
             total_loss += loss(y_w, y).item()
+            """ argmax(1) returns the arg max for each row 
+                and y_w.argmax(1) == y returns a boolean tensor and we sum the true values
+            """
             total_acc += (y_w.argmax(1) == y).type(torch.float).sum().item()
     # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
     return np.exp(total_loss/num_batches), (total_acc/num_samples)
@@ -202,7 +206,7 @@ class FFTranslator(nn.Module):
         if DROPOUT:
             self.drop = nn.Dropout(p=0.1)
         else:
-            self.drop = nn.Dropout(p=0.0)
+            self.drop = nn.Identity()
         if OWN_LINEAR:
             self.fc_source = FCLayer(embedding_dim * (2 * window_size + 1), FC_OUT_ST)
             self.fc_target = FCLayer(embedding_dim * window_size, self.fc_source.shape_out)
@@ -303,7 +307,7 @@ if __name__ == "__main__":
     else:
         model = FFTranslator(train_batch.voc_len, train_batch.windowsize, EMBEDDING_DIM)
     # training
-    optimizer = torch.optim.SGD(model.parameters())
+    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
     epochs = EPOCHS
     checkpoints = CHECKPOINTS
     training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints, EVAL_EVERY_N_BATCHES)
