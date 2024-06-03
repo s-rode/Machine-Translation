@@ -314,3 +314,10 @@ if __name__ == "__main__":
                          EVAL_EVERY_N_BATCHES)
     perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(), len(eval_dataloader))
     print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
+
+    #test = [["zwei","junge","weiße", "männer", "sind", "im","freien", "in", "der", "nähe", "vieler", "büsche", "."]]
+    #test_en = [["two", "young", ",", "black", "males", "are", "outside", "near", "many", "trees", "."]]
+    test = [["mehrere", "frauen", "warten", "in", "einer", "stadt", "im", "freien", "."]]
+    test_en = [["several", "women","wait","outside","in","a","city","."]]
+    print(Search.score(model, test, test_en, bpe, voc))
+
