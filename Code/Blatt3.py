@@ -23,5 +23,8 @@ class FCLayer(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # xA^T + b, x is a row Vector
+        """"
+        A*x = (A*x^tr)^tr = (x*A^tr)
+        """
         z = x @ self.weights + self.bias
         return z
