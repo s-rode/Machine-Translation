@@ -204,6 +204,7 @@ class TranslationDataset(Dataset):
 class FFTranslator(nn.Module):
     def __init__(self, dict_len, window_size, embedding_dim):
         super().__init__()
+        self.windowsize = window_size
         self.embedding = nn.Embedding(dict_len, embedding_dim)
         if DROPOUT:
             self.drop = nn.Dropout(p=0.1)
@@ -312,12 +313,9 @@ if __name__ == "__main__":
         checkpoints = CHECKPOINTS
         training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints,
                          EVAL_EVERY_N_BATCHES)
-    perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(), len(eval_dataloader))
-    print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
-
-    #test = [["zwei","junge","weiße", "männer", "sind", "im","freien", "in", "der", "nähe", "vieler", "büsche", "."]]
-    #test_en = [["two", "young", ",", "black", "males", "are", "outside", "near", "many", "trees", "."]]
-    test = [["mehrere", "frauen", "warten", "in", "einer", "stadt", "im", "freien", "."]]
-    test_en = [["several", "women","wait","outside","in","a","city","."]]
-    print(Search.score(model, test, test_en, bpe, voc))
+    perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(reduction="sum"), len(eval_dataloader))
+    """print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
+    test = [["mehrere", "frauen","warten", "draußen", "in", "der", "nähe", "vieler", "büsche"]]
+    test_en = [["several"]]
+    print(Search.score(model, test, test_en, bpe, voc))"""
 
