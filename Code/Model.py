@@ -32,67 +32,68 @@ DROPOUT = None
 HALVE_LR = None
 
 
+class Loader:
+    @staticmethod
+    def load_bpe(bpe_path: str):
+        with open(f"../config/{bpe_path}", "rb") as f:
+            return pkl.load(f)
 
-def load_bpe(bpe_path: str):
-    with open(f"../config/{bpe_path}", "rb") as f:
-        return pkl.load(f)
+    @staticmethod
+    def save_bpe(text_path_de: str, text_path_en: str, bpe_name: str, iterations: int):
+        input_de = fh1.read_file_words(text_path_de)
+        input_en = fh1.read_file_words(text_path_en)
+        bpe = BPE(fh2.flattenList(input_de + input_en))
+        bpe.learnBPE(iterations)
+        with open(f"../config/{bpe_name}", "wb") as f:
+            pkl.dump(bpe, f)
+        return bpe
 
+    @staticmethod
+    def save_model(model: nn.Module, model_name: str):
+        print(f"saving model to {model_name}")
+        torch.save(model, f"../config/models/{model_name}")
 
-def save_bpe(text_path_de: str, text_path_en: str, bpe_name: str, iterations: int):
-    input_de = fh1.read_file_words(text_path_de)
-    input_en = fh1.read_file_words(text_path_en)
-    bpe = BPE(fh2.flattenList(input_de + input_en))
-    bpe.learnBPE(iterations)
-    with open(f"../config/{bpe_name}", "wb") as f:
-        pkl.dump(bpe, f)
-    return bpe
+    @staticmethod
+    def load_model(model_name: str):
+        return torch.load(f"../config/models/{model_name}")
 
+    @staticmethod
+    def load_voc(voc_path):
+        with open(f"../config/{voc_path}", "rb") as f:
+            return pkl.load(f)
 
-def save_model(model: nn.Module, model_name: str):
-    print(f"saving model to {model_name}")
-    torch.save(model, f"../config/models/{model_name}")
+    @staticmethod
+    def load_batch(batch_path):
+        with open(f"../config/{batch_path}", "rb") as f:
+            return pkl.load(f)
 
+    @staticmethod
+    def save_batch(bpe: BPE, voc: Dictionary, args_de, args_en, window_size, batch_name: str):
+        raw_data_de = fh1.read_file_words(args_de)
+        raw_data_en = fh1.read_file_words(args_en)
+        if debug > 0:
+            print("applying bpe...")
+        # apply BPE to data and apply vocabulary
+        data_de = voc.filterInput(bpe.applyBPE(raw_data_de))
+        data_en = voc.filterInput(bpe.applyBPE(raw_data_en))
+        if debug > 0:
+            print("creating batches...")
+        # create big batches
+        total_words = sum([len(x) for x in data_en]) + len(data_en)
+        batch = Batch(data_de, data_en, total_words, window_size, voc, voc)
+        # saving batches for next time
+        with open(f"../config/{batch_name}", "wb") as f:
+            pkl.dump(batch, f)
+        return batch
 
-def load_model(model_name: str):
-    return torch.load(f"../config/models/{model_name}")
-
-
-def load_voc(voc_path):
-    with open(f"../config/{voc_path}", "rb") as f:
-        return pkl.load(f)
-
-
-def load_batch(batch_path):
-    with open(f"../config/{batch_path}", "rb") as f:
-        return pkl.load(f)
-
-
-def save_batch(bpe: BPE, voc: Dictionary, args_de, args_en, window_size, batch_name: str):
-    raw_data_de = fh1.read_file_words(args_de)
-    raw_data_en = fh1.read_file_words(args_en)
-    if debug > 0:
-        print("applying bpe...")
-    # apply BPE to data and apply vocabulary
-    data_de = voc.filterInput(bpe.applyBPE(raw_data_de))
-    data_en = voc.filterInput(bpe.applyBPE(raw_data_en))
-    if debug > 0:
-        print("creating batches...")
-    # create big batches
-    total_words = sum([len(x) for x in data_en]) + len(data_en)
-    batch = Batch(data_de, data_en, total_words, window_size, voc, voc)
-    # saving batches for next time
-    with open(f"../config/{batch_name}", "wb") as f:
-        pkl.dump(batch, f)
-    return batch
-
-
-def save_voc(text_path_de: str, text_path_en: str, voc_name: str, bpe):
-    input_de = fh1.read_file_words(text_path_de)
-    input_en = fh1.read_file_words(text_path_en)
-    dict = Dictionary(bpe.applyBPE(input_de + input_en))
-    with open(f"../config/{voc_name}", "wb") as f:
-        pkl.dump(dict, f)
-    return dict
+    @staticmethod
+    def save_voc(text_path_de: str, text_path_en: str, voc_name: str, bpe):
+        input_de = fh1.read_file_words(text_path_de)
+        input_en = fh1.read_file_words(text_path_en)
+        dict = Dictionary(bpe.applyBPE(input_de + input_en))
+        with open(f"../config/{voc_name}", "wb") as f:
+            pkl.dump(dict, f)
+        return dict
 
 
 def training_routine(model: nn.Module,
@@ -157,7 +158,7 @@ def train_one_epoch(model: nn.Module,
                             f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
                         break
         if i in checkpoints:
-            save_model(model, f"model_epoch_{epoch+1}_batch_{i}")
+            Loader.save_model(model, f"model1_epoch_{epoch+1}_batch_{i}")
 
 
 def eval_model(model: nn.Module,
@@ -274,23 +275,23 @@ if __name__ == "__main__":
 
     # load or create BPE
     if args.bpe is not None:
-        bpe = load_bpe(args.bpe)
+        bpe = Loader.load_bpe(args.bpe)
     else:
-        bpe = save_bpe(args.train_de, args.train_en, "bpe.pkl", BPE_MERGES)
+        bpe = Loader.save_bpe(args.train_de, args.train_en, "bpe.pkl", BPE_MERGES)
 
     # load or create vocabulary
     if args.voc is not None:
-        voc = load_voc(args.voc)
+        voc = Loader.load_voc(args.voc)
     else:
-        voc = save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
+        voc = Loader.save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
 
     # load or create Batches
     if args.train_batch is not None and args.eval_batch is not None:
-        train_batch = load_batch(args.train_batch)
-        eval_batch = load_batch(args.eval_batch)
+        train_batch = Loader.load_batch(args.train_batch)
+        eval_batch = Loader.load_batch(args.eval_batch)
     else:
-        train_batch = save_batch(bpe, voc, args.train_de, args.train_en, WINDOW_SIZE, "train_batch.pkl")
-        eval_batch = save_batch(bpe, voc, args.eval_de, args.eval_en, WINDOW_SIZE, "eval_batch.pkl")
+        train_batch = Loader.save_batch(bpe, voc, args.train_de, args.train_en, WINDOW_SIZE, "train_batch.pkl")
+        eval_batch = Loader.save_batch(bpe, voc, args.eval_de, args.eval_en, WINDOW_SIZE, "eval_batch.pkl")
 
     # create datasets
     train_dataset = TranslationDataset(train_batch.batches)
@@ -303,7 +304,7 @@ if __name__ == "__main__":
         print("start training...")
     # create model
     if args.model is not None:
-        model = load_model(args.model)
+        model = Loader.load_model(args.model)
     else:
         model = FFTranslator(train_batch.voc_len, train_batch.windowsize, EMBEDDING_DIM)
     # training
