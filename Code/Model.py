@@ -129,6 +129,7 @@ def train_one_epoch(model: nn.Module,
         # set model to training mode to ensure that the gradient tracking is on
         model.train()
         _, _, y = batch
+        # print(t.shape, s.shape, y.shape)
         # loss func needs a row vector converted to long
         y = y.squeeze().to(torch.long)
         y_w = model(batch)
@@ -158,7 +159,7 @@ def train_one_epoch(model: nn.Module,
                             f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
                         break
         if i in checkpoints:
-            Loader.save_model(model, f"model1_epoch_{epoch+1}_batch_{i}")
+            Loader.save_model(model, f"model_new2_epoch_{epoch+1}_batch_{i}")
 
 
 def eval_model(model: nn.Module,
@@ -217,9 +218,13 @@ class FFTranslator(nn.Module):
             self.fc_1 = FCLayer(self.fc_source.shape_out + self.fc_target.shape_out, FC_OUT_1)
             self.fc_3 = FCLayer(self.fc_1.shape_out, dict_len, "xavier")
         else:
+            self.silu = nn.SiLU()
             self.fc_source = nn.Linear(embedding_dim * (2 * window_size + 1), FC_OUT_ST)
+            self.source_batch_norm = nn.BatchNorm1d(FC_OUT_ST)
             self.fc_target = nn.Linear(embedding_dim * window_size, self.fc_source.out_features)
+            self.fc_target_batch_norm = nn.BatchNorm1d(self.fc_source.out_features)
             self.fc_1 = nn.Linear(self.fc_source.out_features + self.fc_target.out_features, FC_OUT_1)
+            self.fc_1_batch_norm = nn.BatchNorm1d(FC_OUT_1)
             self.fc_3 = nn.Linear(self.fc_1.out_features, dict_len)
 
     def forward(self, item: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
@@ -230,11 +235,11 @@ class FFTranslator(nn.Module):
         # concatenate the embeddings
         s = torch.flatten(s, start_dim=1)
         t = torch.flatten(t, start_dim=1)
-        s = self.drop(torch.relu(self.fc_source(s)))
-        t = self.drop(torch.relu(self.fc_target(t)))
+        s = self.drop(self.silu(self.source_batch_norm(self.fc_source(s))))
+        t = self.drop(self.silu(self.fc_target_batch_norm(self.fc_target(t))))
         # concatenating s and t
         x = torch.cat((s, t), 1)
-        x = self.drop(torch.relu(self.fc_1(x)))
+        x = self.drop(self.silu(self.fc_1_batch_norm(self.fc_1(x))))
         # no activation
         x = self.fc_3(x)
         return x
@@ -309,14 +314,15 @@ if __name__ == "__main__":
         model = FFTranslator(train_batch.voc_len, train_batch.windowsize, EMBEDDING_DIM)
     # training
     if args.should_train:
-        optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
         epochs = EPOCHS
         checkpoints = CHECKPOINTS
         training_routine(model, train_dataloader, eval_dataloader, optimizer, epochs, HALVE_LR, checkpoints,
                          EVAL_EVERY_N_BATCHES)
     perpl, acc = eval_model(model, eval_dataloader, nn.CrossEntropyLoss(reduction="sum"), len(eval_dataloader))
-    """print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
-    test = [["mehrere", "frauen","warten", "draußen", "in", "der", "nähe", "vieler", "büsche"]]
+    print(f"Perplexity: {perpl}, Accuracy: {acc} of the model on the evaluation data")
+
+    """test = [["mehrere", "frauen","warten", "draußen", "in", "der", "nähe", "vieler", "büsche"]]
     test_en = [["several"]]
     print(Search.score(model, test, test_en, bpe, voc))"""
 
