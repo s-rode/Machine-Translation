@@ -17,7 +17,7 @@ class Korpus:
     reflen: int = 0
 
     def __init__(self, ref_file, hyp_file):
-        self.data = list(zip(FileHandler.read_file_words(ref_file), FileHandler.read_file_words(hyp_file)))
+        self.data = list(zip(ref_file, hyp_file))
         for (r, h) in self.data:
             self.hyplen += len(h)
             self.reflen += len(r)

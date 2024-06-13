@@ -74,7 +74,7 @@ class GreedySearch:
                 if ind.item() == mapping["</s>"]:
                     break
                 # for debugging
-                print(self.reverse_voc.get(ind.item(), '<unk'), end=" ")
+                #print(self.reverse_voc.get(ind.item(), '<unk'), end=" ")
         return results
 
 
@@ -103,7 +103,7 @@ class GreedySearch:
                 if word[-2:] == "@@":
                     mark = True
             greedy_res_str = newelem
-        print(greedy_res_str)
+        #print(greedy_res_str)
         return greedy_res_str[1:-1]
 
 
@@ -228,6 +228,42 @@ def calculate_ratio(source_path: str, target_path: str):
 
     return target_avg / source_avg
 
+def calc_bleus(search: str, model_path: str, source_path, target_path, bpe, voc, beam_size: int, offset: int, fill: int):
+        # listing all modelnames in the directory
+    source_eval = fh1.read_file_words(args.eval_de)
+    target_eval = fh1.read_file_words(args.eval_en)
+    path = Path(model_path)
+    all_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".")]
+    print("Models loaded")
+    # list of bleu_scores archieved with the different models
+    bleu_list = []
+    for model_name in all_model_names:
+        model = Loader.load_model(model_name)
+        print(f"Model: {model_name}")
+        hyp = []
+        # translating setences one by one
+        if search == "beam":
+            bs = BeamSearch(source_path, target_path, bpe, voc)
+            for i, sequence in enumerate(source_eval):
+                hyp.append(bs.beam_wrapper(model, sequence, beam_size, offset, fill))
+                # progress
+                if i % 50 == 0:
+                    print(f"Progress: {i}/{len(source_eval)}")
+        elif search == "greedy":
+            gs = GreedySearch(source_path, target_path, bpe, voc)
+            for i, sequence in enumerate(source_eval):
+                hyp.append(gs.greedy_wrapper(model, sequence, 0, True))
+                # progress
+                if i % 50 == 0:
+                    print(f"Progress: {i}/{len(source_eval)}")
+        else:
+            print("wrong search method")
+            return
+        korp = Korpus(target_eval, hyp)
+        print(f"BLEU: {korp.bleu4()}")
+        bleu_list.append((korp.bleu4(), model_name))
+    return bleu_list
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_de", type=str, help="path to de training data")
@@ -257,7 +293,7 @@ if __name__ == "__main__":
     #s1 = source[20]
     #bs.beam_wrapper(model, s1, args.beam_size, args.offset, True, True)
 
-    print(bs.calc_bleus("../config/models", source, target, 5, 1, 8))
+    print(calc_bleus("beam","../config/Models", args.eval_de, args.eval_en, bpe, voc, 2, 1, 8))
 
 
 
