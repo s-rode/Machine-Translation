@@ -10,6 +10,21 @@ class FileHandler:
             f.close()
         return sentences
 
+    @staticmethod
+    def write_ints_to_file(file: str, text: list[list[int]]):
+        with open(f"../config/{file}", 'w', encoding="utf-8") as f:
+            for line in text:
+                f.write(' '.join(map(str, line)) + '\n')
+            f.close()
+
+    @staticmethod
+    def read_file_ints(file: str) -> list[list[int]]:
+        with open(f"../config/{file}", 'r'
+                , encoding="utf-8") as f:
+            lines = [list(map(int, line.split())) for line in f]
+        return lines
+
+
 
 class Korpus:
     data: list[tuple[list[str], list[str]]]

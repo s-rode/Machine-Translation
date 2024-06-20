@@ -22,7 +22,7 @@ BPE_MERGES = 7000
 
 
 class RNNDataSet(Dataset):
-    def __init__(self, source: list[list[str]], target: list[list[str]]):
+    def __init__(self, source: list[list[int]], target: list[list[int]]):
         # big_batch has only a single element
         self.source = source
         self.target = target
@@ -35,15 +35,33 @@ class RNNDataSet(Dataset):
         return self.source[index], self.target[index]
 
 
+def bpe_and_to_int(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[list[int]]:
+    text = bpe.applyBPE(text)
+    copy = []
+    for i in range(len(text)):
+        copy.append([])
+        for j in range(len(text[i])):
+            if text[i][j] not in voc.getDictionary():
+                if text[i][j][-2:] == "@@":
+                    copy[i].append(3)  # append <unk>@@
+                else:
+                    copy[i].append(2)  # append <unk>
+            else:
+                copy[i].append(voc.getDictionary()[text[i][j]])
+        copy[i].append(1)  # append </s>
+    return copy
+
+
 def pad(batch):
     (source_seqs, target_seqs) = zip(*batch)
 
     # remember lengths for packing later
     source_lengths = [len(seq) for seq in source_seqs]
     target_lengths = [len(seq) for seq in target_seqs]
-
-    source_padded = pad_sequence(torch.Tensor(source_seqs), batch_first=True, padding_value=-1)
-    target_padded = pad_sequence(torch.Tensor(target_seqs), batch_first=True, padding_value=-1)
+    source_tens = [torch.Tensor(seq) for seq in source_seqs]
+    target_tens = [torch.Tensor(seq) for seq in target_seqs]
+    source_padded = pad_sequence(source_tens, batch_first=True, padding_value=-1)
+    target_padded = pad_sequence(target_tens, batch_first=True, padding_value=-1)
 
     return source_padded, target_padded, source_lengths, target_lengths
 
@@ -273,6 +291,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_en", type=str, help="path to en evaluation data")
     parser.add_argument("--bpe", type=str, help="name of bpe file")
     parser.add_argument("--voc", type=str, help="name of voc file")
+    parser.add_argument("--train_de_int", type=str, help="path to de training data")
+    parser.add_argument("--train_en_int", type=str, help="path to en training data")
     args = parser.parse_args()
 
     # load or create BPE
@@ -288,16 +308,22 @@ if __name__ == "__main__":
         voc = Loader.save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
 
     # create dataset
-    train_de = fh1.read_file_words(args.train_de)
-    train_en = fh1.read_file_words(args.train_en)
     eval_de = fh1.read_file_words(args.eval_de)
     eval_en = fh1.read_file_words(args.eval_en)
-    train_de = voc.filterInput(bpe.applyBPE(train_de))
-    train_en = voc.filterInput(bpe.applyBPE(train_en))
+    if args.train_de_int is not None:
+        train_de = fh1.read_file_ints(args.train_de_int)
+        train_en = fh1.read_file_ints(args.train_en_int)
+    else:
+        train_de = fh1.read_file_words(args.train_de)
+        train_en = fh1.read_file_words(args.train_en)
+        train_de = bpe_and_to_int(train_de, voc, bpe)
+        train_en = bpe_and_to_int(train_en, voc, bpe)
+        fh1.write_ints_to_file("train_de_int.txt", train_de)
+        fh1.write_ints_to_file("train_en_int.txt", train_en)
     dataset = RNNDataSet(train_de, train_en)
     data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
     model_enc = RNNDecoder(len(voc.getDictionary()), 256)
     model_dec = RNNEncoder(len(voc.getDictionary()), 256)
     optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.005)
     optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.005)
-    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, 10, True, [[], [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]], 100)
+    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, 10, True, [[], []], 100)
