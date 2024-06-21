@@ -19,6 +19,7 @@ DEC_LSTM_SIZE = 256
 ATTN_SIZE = 256
 PATIENCE = 5
 BPE_MERGES = 7000
+IGNORE_INDEX = 0
 
 
 class RNNDataSet(Dataset):
@@ -58,10 +59,10 @@ def pad(batch):
     # remember lengths for packing later
     source_lengths = [len(seq) for seq in source_seqs]
     target_lengths = [len(seq) for seq in target_seqs]
-    source_tens = [torch.Tensor(seq) for seq in source_seqs]
-    target_tens = [torch.Tensor(seq) for seq in target_seqs]
-    source_padded = pad_sequence(source_tens, batch_first=True, padding_value=-1)
-    target_padded = pad_sequence(target_tens, batch_first=True, padding_value=-1)
+    source_tens = [torch.Tensor(seq).to(torch.int32) for seq in source_seqs]
+    target_tens = [torch.Tensor(seq).to(torch.int32) for seq in target_seqs]
+    source_padded = pad_sequence(source_tens, batch_first=True, padding_value=IGNORE_INDEX)
+    target_padded = pad_sequence(target_tens, batch_first=True, padding_value=IGNORE_INDEX)
 
     return source_padded, target_padded, source_lengths, target_lengths
 
@@ -156,7 +157,7 @@ class RNNDecoder(nn.Module):
         """
         embedded = self.embedding(e_prev)  # maybe add dropout later
         # embedded: (batch_size, 1, embedding_size)
-        embedded = pack_padded_sequence(embedded, lengths, batch_first=True, enforce_sorted=False)
+        embedded = pack_padded_sequence(embedded, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
         if s1_prev is None:
             e, s1 = self.lstm(embedded)
         else:
@@ -269,11 +270,11 @@ def training_routine(encoder: nn.Module,
                      halve_lr: bool,
                      checkpoints: list[list[int]],
                      eval_every_n_batches: int):
-    loss_func = nn.CrossEntropyLoss(reduction="sum", ignore_index=-1)
+    loss_func = nn.CrossEntropyLoss(reduction="sum", ignore_index=IGNORE_INDEX)
     for name, param in encoder.named_parameters():
-        print(f"Parameter name: {name}, Shape: {param.shape}")
+        print(f"Encoder Parameter name: {name}, Shape: {param.shape}")
     for name, param in decoder.named_parameters():
-        print(f"Parameter name: {name}, Shape: {param.shape}")
+        print(f"Decoder Parameter name: {name}, Shape: {param.shape}")
     n = sum(p.numel() for p in encoder.parameters()) + sum(p.numel() for p in encoder.parameters())
     print(f"Number of total parameters: {n}")
 
@@ -322,8 +323,8 @@ if __name__ == "__main__":
         fh1.write_ints_to_file("train_en_int.txt", train_en)
     dataset = RNNDataSet(train_de, train_en)
     data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
-    model_enc = RNNDecoder(len(voc.getDictionary()), 256)
-    model_dec = RNNEncoder(len(voc.getDictionary()), 256)
+    model_enc = RNNEncoder(len(voc.getDictionary()), 256)
+    model_dec = RNNDecoder(len(voc.getDictionary()), 256)
     optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.005)
     optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.005)
     training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, 10, True, [[], []], 100)
