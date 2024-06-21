@@ -19,6 +19,7 @@ DEC_LSTM_SIZE = 256
 ATTN_SIZE = 256
 PATIENCE = 5
 BPE_MERGES = 7000
+IGNORE_INDEX = 0
 
 
 class RNNDataSet(Dataset):
@@ -58,10 +59,10 @@ def pad(batch):
     # remember lengths for packing later
     source_lengths = [len(seq) for seq in source_seqs]
     target_lengths = [len(seq) for seq in target_seqs]
-    source_tens = [torch.Tensor(seq) for seq in source_seqs]
-    target_tens = [torch.Tensor(seq) for seq in target_seqs]
-    source_padded = pad_sequence(source_tens, batch_first=True, padding_value=-1)
-    target_padded = pad_sequence(target_tens, batch_first=True, padding_value=-1)
+    source_tens = [torch.Tensor(seq).to(torch.int32) for seq in source_seqs]
+    target_tens = [torch.Tensor(seq).to(torch.int32) for seq in target_seqs]
+    source_padded = pad_sequence(source_tens, batch_first=True, padding_value=IGNORE_INDEX)
+    target_padded = pad_sequence(target_tens, batch_first=True, padding_value=IGNORE_INDEX)
 
     return source_padded, target_padded, source_lengths, target_lengths
 
@@ -75,14 +76,14 @@ class RNNEncoder(nn.Module):
     def forward(self, x: torch.Tensor, lengths: list[int]):
         # x is a batch of sequences
         # x shape: (batch_size, seq_len)
+        #x = pack_padded_sequence(x, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
         x = self.embedding(x)
         # x shape: (batch_size, seq_len, embedding_size)
-        x = pack_padded_sequence(x, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
         """
         if we have only one layer the last entry of x is h
         """
         x, (h, c) = self.lstm(x)
-        x, _ = pad_packed_sequence(x, batch_first=True)  # unpack (back to padded), we don't need the lengths
+        #x, _ = pad_packed_sequence(x, batch_first=True)  # unpack (back to padded), we don't need the lengths
 
         # we don't need the hidden state
         # x shape: (batchsize, seqsize, 2*en_hidden) (bc biderectional)
@@ -90,10 +91,10 @@ class RNNEncoder(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(self, encoder_hidden_size, decoder_hidden_size):
         super(Attention, self).__init__()
-        self.A = nn.Linear(2 * EN_HIDDEN_SIZE, ATTN_SIZE)
-        self.B = nn.Linear(hidden_size, ATTN_SIZE)
+        self.A = nn.Linear(encoder_hidden_size, ATTN_SIZE)
+        self.B = nn.Linear(decoder_hidden_size, ATTN_SIZE)
         self.V = nn.Linear(ATTN_SIZE, 1)
         self.b_small = nn.Parameter(torch.zeros(ATTN_SIZE))
 
@@ -106,11 +107,12 @@ class Attention(nn.Module):
         # s_i: (batch_size, 1, hidden_size)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
         # scores: (batch_size, seq_len, 1)
-        scores = scores.squeeze(2).unsqueeze(1)
+        #scores = scores.squeeze(2).unsqueeze(1)
         # scores: (batch_size, 1, seq_len)
         # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
-        weights = torch.softmax(scores, dim=-1)  # since we want softmax over \alpha_i which is the seq_len
-        context = torch.bmm(weights, f_j)
+        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
+        #context = torch.bmm(weights, f_j)
+        context = torch.sum(weights * f_j, dim=1)
         return context  # 2*EN_HIDDEN_SIZE
 
 
@@ -119,7 +121,7 @@ class RNNDecoder(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_size)
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers)
-        self.attention = Attention(DEC_HIDDEN_SIZE)
+        self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
         self.lstm2 = nn.LSTM(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE, dropout=dropout,
                              num_layers=num_layers)
         self.out = nn.Linear(DEC_LSTM_SIZE, dict_len)
@@ -145,7 +147,8 @@ class RNNDecoder(nn.Module):
                 decoder_input = x.squeeze().detach()  # check if squeeze is correct
             else:
                 decoder_input = target_tensor[:, i].unsqueeze(1)
-        return torch.cat(decoder_outputs, dim=1)
+        return decoder_outputs
+        #torch.cat(decoder_outputs, dim=1)
 
     def forward_step(self, e_prev, s1_prev, s2_prev, f_j, lengths):
         """
@@ -156,22 +159,29 @@ class RNNDecoder(nn.Module):
         """
         embedded = self.embedding(e_prev)  # maybe add dropout later
         # embedded: (batch_size, 1, embedding_size)
-        embedded = pack_padded_sequence(embedded, lengths, batch_first=True, enforce_sorted=False)
+        #print(f"Embedded shape: {embedded.shape}")
+        #print(f"Lengths: {lengths}")
+        #embedded = pack_padded_sequence(embedded, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
+        #print(f"Embedded shape after packing: {embedded.data.shape}")
         if s1_prev is None:
+            #print("s1_prev is None")
             e, s1 = self.lstm(embedded)
         else:
+            #print(f"s1_prev[0] shape: {s1_prev[0].shape}")
+            s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
             e, s1 = self.lstm(embedded, s1_prev)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
         # (batch_size, hidden_size)
         attention_context = self.attention(f_j, e)
+        #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
         if s2_prev is None:
             e, s2 = self.lstm2(input_lstm)
         else:
             e, s2 = self.lstm2(input_lstm, s2_prev)
         output = self.out(e)
-        output = pad_packed_sequence(output, batch_first=True)
+        #output = pad_packed_sequence(output, batch_first=True)
         return output, s1, s2
 
 
@@ -199,8 +209,11 @@ def eval_model(encoder: nn.Module,
             y_dec = decoder(y_enc, targ_len)
             # loss func needs a row vector converted to long (it was a column vector)
             y = y.squeeze().to(torch.long)
-            total_loss += loss(y_dec, y).item()
-            total_acc += (y_dec.argmax(1) == y).type(torch.float).sum().item()  # todo: correct????
+            for j in range(len(y_dec)):
+                total_loss += loss(y_dec[j], y[:, j]).item()
+                total_acc += (y_dec[j].argmax(1) == y[:, j]).type(torch.float).sum().item()
+            #total_loss += loss(y_dec, y).item()
+            #total_acc += (y_dec.argmax(1) == y).type(torch.float).sum().item()  # todo: correct????
     # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
     return np.exp(total_loss / num_samples), (total_acc / num_samples)
 
@@ -226,7 +239,13 @@ def train_one_epoch(encoder: nn.Module,
         y = targ_pad.squeeze().to(torch.long)
         y_enc = encoder(source_pad, source_len)
         y_dec = decoder(y_enc, targ_len)
-        loss = lossfunc(y_dec, y) / y.shape[0]  # divide by batch size cause we used summed loss
+        # ydec is list of seq_len elements
+        loss = 0
+        for j in range(len(y_dec)):
+            debug = y[:, j]
+            loss+= lossfunc(y_dec[j], y[:, j])
+        #loss = lossfunc(y_dec, y) / y.shape[0]  # divide by batch size cause we used summed loss
+        loss /= len(y_dec)
         loss.backward()
         optimizer_enc.step()
         optimizer_enc.zero_grad()
@@ -259,17 +278,17 @@ def train_one_epoch(encoder: nn.Module,
             Loader.save_model(encoder, f"encoder_epoch_{epoch + 1}_batch_{i}")
             Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")
 
-
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
                      train_dataloader: DataLoader,
                      eval_dataloader: DataLoader,
-                     optimizer: torch.optim,
+                     optimizer_enc: torch.optim,
+                     optimizer_dec: torch.optim,
                      epochs: int,
                      halve_lr: bool,
                      checkpoints: list[list[int]],
                      eval_every_n_batches: int):
-    loss_func = nn.CrossEntropyLoss(reduction="sum", ignore_index=-1)
+    loss_func = nn.CrossEntropyLoss(reduction="sum", ignore_index=IGNORE_INDEX)
     for name, param in encoder.named_parameters():
         print(f"Parameter name: {name}, Shape: {param.shape}")
     for name, param in decoder.named_parameters():
@@ -279,7 +298,7 @@ def training_routine(encoder: nn.Module,
 
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}")
-        train_one_epoch(encoder, decoder, train_dataloader, eval_dataloader, optimizer, checkpoints[epoch + 1],
+        train_one_epoch(encoder, decoder, train_dataloader, eval_dataloader, optimizer_enc, optimizer_dec, checkpoints[epoch + 1],
                         loss_func, epoch,
                         eval_every_n_batches, halve_lr)
 
@@ -308,6 +327,7 @@ if __name__ == "__main__":
         voc = Loader.save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
 
     # create dataset
+    """
     eval_de = fh1.read_file_words(args.eval_de)
     eval_en = fh1.read_file_words(args.eval_en)
     if args.train_de_int is not None:
@@ -321,9 +341,11 @@ if __name__ == "__main__":
         fh1.write_ints_to_file("train_de_int.txt", train_de)
         fh1.write_ints_to_file("train_en_int.txt", train_en)
     dataset = RNNDataSet(train_de, train_en)
+    torch.save(dataset, "dataset.pkl")"""
+    dataset = torch.load("dataset.pkl")
     data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
-    model_enc = RNNDecoder(len(voc.getDictionary()), 256)
-    model_dec = RNNEncoder(len(voc.getDictionary()), 256)
+    model_enc = RNNEncoder(len(voc.getDictionary()), 256)
+    model_dec = RNNDecoder(len(voc.getDictionary()), 256)
     optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.005)
     optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.005)
-    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, 10, True, [[], []], 100)
+    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], []], 100)
