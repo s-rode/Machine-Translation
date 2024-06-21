@@ -107,13 +107,13 @@ class Attention(nn.Module):
         # s_i: (batch_size, 1, hidden_size)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
         # scores: (batch_size, seq_len, 1)
-        #scores = scores.squeeze(2).unsqueeze(1)
+        scores = scores.squeeze(2).unsqueeze(1)
         # scores: (batch_size, 1, seq_len)
         # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
         weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
-        #context = torch.bmm(weights, f_j)
-        context = torch.sum(weights * f_j, dim=1)
-        return context  # 2*EN_HIDDEN_SIZE
+        context = torch.bmm(weights, f_j)
+        #context = torch.sum(weights * f_j, dim=1)
+        return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
 
 
 class RNNDecoder(nn.Module):
@@ -144,11 +144,12 @@ class RNNDecoder(nn.Module):
             decoder_outputs.append(output)
             if target_tensor is None:
                 _, x = output.topk(1)
-                decoder_input = x.squeeze().detach()  # check if squeeze is correct
+                decoder_input = x.squeeze(-1).detach()  # check if squeeze is correct
             else:
                 decoder_input = target_tensor[:, i].unsqueeze(1)
-        return decoder_outputs
-        #torch.cat(decoder_outputs, dim=1)
+        #return decoder_outputs
+        seq_out = torch.cat(decoder_outputs, dim=1)
+        return seq_out
 
     def forward_step(self, e_prev, s1_prev, s2_prev, f_j, lengths):
         """
@@ -168,7 +169,7 @@ class RNNDecoder(nn.Module):
             e, s1 = self.lstm(embedded)
         else:
             #print(f"s1_prev[0] shape: {s1_prev[0].shape}")
-            s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
+            #s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
             e, s1 = self.lstm(embedded, s1_prev)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
@@ -182,7 +183,7 @@ class RNNDecoder(nn.Module):
             e, s2 = self.lstm2(input_lstm, s2_prev)
         output = self.out(e)
         #output = pad_packed_sequence(output, batch_first=True)
-        return output, s1, s2
+        return output.unsqueeze(1), s1, s2  # unsqueeze so we can concatenate the outputs later
 
 
 def eval_model(encoder: nn.Module,
@@ -206,13 +207,9 @@ def eval_model(encoder: nn.Module,
             # loss func needs a row vector converted to long
             y = targ_pad.squeeze().to(torch.long)
             y_enc = encoder(source_pad, source_len)
-            y_dec = decoder(y_enc, targ_len)
-            # loss func needs a row vector converted to long (it was a column vector)
-            y = y.squeeze().to(torch.long)
-            for j in range(len(y_dec)):
-                total_loss += loss(y_dec[j], y[:, j]).item()
-                total_acc += (y_dec[j].argmax(1) == y[:, j]).type(torch.float).sum().item()
-            #total_loss += loss(y_dec, y).item()
+            y_dec = decoder(y_enc, targ_len)  # dim: (batch_size, seq_len, vocab_size)
+            y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
+            total_loss += loss(y_dec, y).item()
             #total_acc += (y_dec.argmax(1) == y).type(torch.float).sum().item()  # todo: correct????
     # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
     return np.exp(total_loss / num_samples), (total_acc / num_samples)
@@ -238,21 +235,20 @@ def train_one_epoch(encoder: nn.Module,
         # loss func needs a row vector converted to long
         y = targ_pad.squeeze().to(torch.long)
         y_enc = encoder(source_pad, source_len)
-        y_dec = decoder(y_enc, targ_len)
-        # ydec is list of seq_len elements
-        loss = 0
-        for j in range(len(y_dec)):
-            debug = y[:, j]
-            loss+= lossfunc(y_dec[j], y[:, j])
-        #loss = lossfunc(y_dec, y) / y.shape[0]  # divide by batch size cause we used summed loss
-        loss /= len(y_dec)
+        y_dec = decoder(y_enc, targ_len) # dim: (batch_size, seq_len, vocab_size)
+        y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
+        #for j in range(len(y_dec)):
+            #debug = y[:, j]
+            #loss+= lossfunc(y_dec[j], y[:, j])
+        loss = lossfunc(y_dec, y) / y.shape[0]  # divide by batch size cause we used summed loss
+        print(f"current Loss: {loss}")
         loss.backward()
         optimizer_enc.step()
         optimizer_enc.zero_grad()
         optimizer_dec.step()
         optimizer_dec.zero_grad()
         # evaluate every n updates
-        if i % eval_every_n_batches == 0:
+        """if i % eval_every_n_batches == 0:
             eval_perpl, eval_acc = eval_model(encoder, decoder, eval_dataloader, lossfunc, len(eval_dataloader))
             print(f"Batch: {i}/{len(dataloader)} Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
             # check if the current perplexity is still better
@@ -276,7 +272,7 @@ def train_one_epoch(encoder: nn.Module,
                         break
         if i in checkpoints:
             Loader.save_model(encoder, f"encoder_epoch_{epoch + 1}_batch_{i}")
-            Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")"""
 
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
@@ -346,6 +342,6 @@ if __name__ == "__main__":
     data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
     model_enc = RNNEncoder(len(voc.getDictionary()), 256)
     model_dec = RNNDecoder(len(voc.getDictionary()), 256)
-    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.005)
-    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.005)
-    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], []], 100)
+    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.001)
+    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.001)
+    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[1], [5,10,15]], 10)
