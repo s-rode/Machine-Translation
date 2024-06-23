@@ -13,14 +13,13 @@ from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
 from Blatt1 import FileHandler as fh1
 from Model import Loader
 
-EN_HIDDEN_SIZE = 256
-DEC_HIDDEN_SIZE = 256
-DEC_LSTM_SIZE = 256
-ATTN_SIZE = 256
+EN_HIDDEN_SIZE = 257
+DEC_HIDDEN_SIZE = 258
+DEC_LSTM_SIZE = 259
+ATTN_SIZE = 300
 PATIENCE = 5
 BPE_MERGES = 7000
 IGNORE_INDEX = 0
-
 
 class RNNDataSet(Dataset):
     def __init__(self, source: list[list[int]], target: list[list[int]]):
@@ -57,8 +56,8 @@ def pad(batch):
     (source_seqs, target_seqs) = zip(*batch)
 
     # remember lengths for packing later
-    source_lengths = [len(seq) for seq in source_seqs]
-    target_lengths = [len(seq) for seq in target_seqs]
+    source_lengths = torch.Tensor([len(seq) for seq in source_seqs]).to(torch.int64)
+    target_lengths = torch.Tensor([len(seq)-1 for seq in target_seqs]).to(torch.int64) # !!! -1 bc eos is removed in training
     source_tens = [torch.Tensor(seq).to(torch.int32) for seq in source_seqs]
     target_tens = [torch.Tensor(seq).to(torch.int32) for seq in target_seqs]
     source_padded = pad_sequence(source_tens, batch_first=True, padding_value=IGNORE_INDEX)
@@ -71,25 +70,43 @@ class RNNEncoder(nn.Module):
     def __init__(self, dict_len: int, embedding_size: int, dropout=0.1, num_layers=1):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_size)
-        self.lstm = nn.LSTM(embedding_size, EN_HIDDEN_SIZE, dropout=dropout, bidirectional=True, num_layers=num_layers)
+        self.lstm = nn.LSTM(embedding_size, EN_HIDDEN_SIZE, dropout=dropout, bidirectional=True, num_layers=num_layers, batch_first=True)
 
-    def forward(self, x: torch.Tensor, lengths: list[int]):
+    def forward(self, x: torch.Tensor, lengths: torch.Tensor):
         # x is a batch of sequences
         # x shape: (batch_size, seq_len)
-        #x = pack_padded_sequence(x, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
         x = self.embedding(x)
         # x shape: (batch_size, seq_len, embedding_size)
-        """
-        if we have only one layer the last entry of x is h
-        """
-        x, (h, c) = self.lstm(x)
-        #x, _ = pad_packed_sequence(x, batch_first=True)  # unpack (back to padded), we don't need the lengths
-
-        # we don't need the hidden state
+        x_pack = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
+        x, (h, c) = self.lstm(x_pack)
+        x, _ = pad_packed_sequence(x, batch_first=True) # unpack (back to padded), we don't need the lengths
         # x shape: (batchsize, seqsize, 2*en_hidden) (bc biderectional)
         return x
 
+"""
+class Attention(nn.Module):
+    def __init__(self, encoder_hidden_size, decoder_hidden_size):
+        super(Attention, self).__init__()
+        self.A = nn.Linear(encoder_hidden_size, ATTN_SIZE).to(device)
+        self.B = nn.Linear(decoder_hidden_size, ATTN_SIZE).to(device)
+        self.V = nn.Linear(ATTN_SIZE, 1).to(device)
+        self.b_small = nn.Parameter(torch.zeros(ATTN_SIZE)).to(device)
 
+    def forward(self, f_j, s_i):
+        #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
+        #s_i: (batch_size, hidden_size)
+        s_i = s_i.unsqueeze(1)
+        # s_i: (batch_size, 1, hidden_size)
+        scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
+        # scores: (batch_size, seq_len, 1)
+        scores = scores.squeeze(2).unsqueeze(1)
+        # scores: (batch_size, 1, seq_len)
+        # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
+        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
+        context = torch.bmm(weights, f_j)
+        #context = torch.sum(weights * f_j, dim=1)
+        return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
+    """
 class Attention(nn.Module):
     def __init__(self, encoder_hidden_size, decoder_hidden_size):
         super(Attention, self).__init__()
@@ -103,6 +120,29 @@ class Attention(nn.Module):
         f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
         s_i: (batch_size, hidden_size)
         """
+        # s_i: (batch_size, 1, hidden_size)
+        s_i = s_i.unsqueeze(2)
+        f_j = f_j.unsqueeze(1)
+        #print(s_i.shape)
+        #print(f_j.shape)
+        scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
+        # scores: (batch_size, seq_len, 1)
+        scores = scores.squeeze(3)
+        # scores: (batch_size, seq_len_src, seq_len_targ)
+        # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
+        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
+        #print(weights.shape)
+        f_j = f_j.squeeze(1)
+        #print(f_j.shape)
+        context = torch.bmm(weights, f_j)
+        #context = torch.sum(weights * f_j, dim=1)
+        #print(context.shape)
+        return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
+
+
+    def forward_single(self, f_j, s_i):
+        #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
+        #s_i: (batch_size, hidden_size)
         s_i = s_i.unsqueeze(1)
         # s_i: (batch_size, 1, hidden_size)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
@@ -119,12 +159,12 @@ class Attention(nn.Module):
 class RNNDecoder(nn.Module):
     def __init__(self, dict_len: int, embedding_size: int, dropout=0.1, num_layers=1):
         super().__init__()
-        self.embedding = nn.Embedding(dict_len, embedding_size)
-        self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers)
-        self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
-        self.lstm2 = nn.LSTM(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE, dropout=dropout,
-                             num_layers=num_layers)
-        self.out = nn.Linear(DEC_LSTM_SIZE, dict_len)
+        self.embedding = nn.Embedding(dict_len, embedding_size).to(device)
+        self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers).to(device)
+        self.attention = Attention(2 * EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE).to(device)
+        #self.lstm2 = nn.LSTM(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE, dropout=dropout, num_layers=num_layers)
+        self.outbefore = nn.Linear(2 * EN_HIDDEN_SIZE+ DEC_HIDDEN_SIZE, DEC_LSTM_SIZE).to(device)
+        self.out = nn.Linear(DEC_LSTM_SIZE, dict_len).to(device)
 
     def forward(self, encoder_outputs, lengths, target_tensor=None):
         """
@@ -132,15 +172,14 @@ class RNNDecoder(nn.Module):
                 i.e. we feed the correct target word into the decoder and not the predicted one
         """
         batch_size = encoder_outputs.shape[0]
-        decoder_input = torch.empty(batch_size, 1, dtype=torch.long)
+        decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=device)
         decoder_input.fill_(0)  # first input is always <s>
         decoder_hidden_1 = None
         decoder_hidden_2 = None
         decoder_outputs = []
         max_length = max(lengths)
         for i in range(max_length):
-            output, decoder_hidden_1, decoder_hidden_2 = self.forward_step(decoder_input, decoder_hidden_1,
-                                                                           decoder_hidden_2, encoder_outputs, lengths)
+            output, decoder_hidden_1 = self.forward_step(decoder_input, decoder_hidden_1, encoder_outputs, lengths)
             decoder_outputs.append(output)
             if target_tensor is None:
                 _, x = output.topk(1)
@@ -151,11 +190,44 @@ class RNNDecoder(nn.Module):
         seq_out = torch.cat(decoder_outputs, dim=1)
         return seq_out
 
-    def forward_step(self, e_prev, s1_prev, s2_prev, f_j, lengths):
+    def forward_beam_search(self, encoder_outputs, lengths, beam_size: int, voc: Dictionary, max_length=None, return_topk = False):
+        batch_size = encoder_outputs.shape[0]
+        decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=device)
+        decoder_input.fill_(0)  # first input is always <s>
+        mapping = voc.getDictionary()
+        beam = [([mapping["<s>"]], 0.0, None)]  # (sequence, probability, hidden state)
+        finished = []
+        if max_length is None:
+            max_length = max(lengths)
+        with torch.no_grad():
+            for _ in range(max_length):
+                temp = []
+                for seq, prob, hidden_state in beam:
+                    decoder_input = torch.Tensor([seq[-1]]).unsqueeze(0)
+                    output, new_hidden = self.forward_step(decoder_input, hidden_state, encoder_outputs, lengths)
+                    output = torch.softmax(output, dim=-1)
+                    values, indices = torch.topk(output, beam_size)
+                    for val, ind in zip(values.squeeze(), indices.squeeze()):
+                        if ind.item() == mapping["</s>"]:
+                            finished.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                        else:
+                            temp.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                beam = sorted(temp, key=lambda x: x[1], reverse=True)[:beam_size]
+
+                # if all sequences have ended, we can stop
+                if not beam:
+                    break
+        res = finished + beam
+        if return_topk:
+            return sorted(res, key=lambda x: x[1], reverse=True)[:beam_size]
+        else:
+            return sorted(res, key=lambda x: x[1], reverse=True)[0]
+
+
+    def forward_step(self, e_prev, s1_prev, f_j, lengths):
         """
         @param e_prev: the previous word (batch_size)
         @param s1_prev: the previous hidden state; 2-tuple of (h, c)?
-        @param s2_prev: the prev hidden state of the lstm2
         @param f_j: the encoder outputs (batch_size, seq_len, 2*hidden_size)
         """
         embedded = self.embedding(e_prev)  # maybe add dropout later
@@ -177,13 +249,114 @@ class RNNDecoder(nn.Module):
         attention_context = self.attention(f_j, e)
         #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
+        """
         if s2_prev is None:
             e, s2 = self.lstm2(input_lstm)
         else:
             e, s2 = self.lstm2(input_lstm, s2_prev)
-        output = self.out(e)
+            """
+        output = self.out(self.outbefore(input_lstm))
         #output = pad_packed_sequence(output, batch_first=True)
-        return output.unsqueeze(1), s1, s2  # unsqueeze so we can concatenate the outputs later
+        return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
+
+
+class RNNDecoder_unrolled(nn.Module):
+    def __init__(self, dict_len: int, embedding_size: int, dropout=0.1, num_layers=1):
+        super().__init__()
+        self.embedding = nn.Embedding(dict_len, embedding_size)
+        self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers, batch_first=True)
+        self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
+        self.out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, dict_len)
+
+    def forward(self, input, targ_lengths, f_j):
+        """
+        @param input: the whole sequence
+        @param targ_lengths: the lengths of the sequences
+        @param f_j: the encoder outputs
+        """
+        embedded = self.embedding(input)  # maybe add dropout later
+        # embedded: (batch_size, seq_len, embedding_size)
+        #print(f"Embedded shape after packing: {embedded.data.shape}")
+        x_pack = pack_padded_sequence(embedded, targ_lengths, batch_first=True, enforce_sorted=False)
+        x, (h, c) = self.lstm(x_pack)
+        x, _ = pad_packed_sequence(x, batch_first=True)
+        # (batch_size, 1, hidden_size), 2-tuple of (h, c)
+        attention_context = self.attention(f_j, x)
+        #attention_context = attention_context.squeeze(1)
+        #print(attention_context.shape, x.shape)
+        linear_input = torch.cat((attention_context, x), dim=2)
+        output = self.out(linear_input)
+
+        return output  # unsqueeze so we can concatenate the outputs later
+
+    def forward_beam_search(self, encoder_outputs, lengths, beam_size: int, voc: Dictionary, max_length=None, return_topk = False):
+        batch_size = encoder_outputs.shape[0]
+        decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=device)
+        decoder_input.fill_(0)  # first input is always <s>
+        mapping = voc.getDictionary()
+        beam = [([mapping["<s>"]], 0.0, None)]  # (sequence, probability, hidden state)
+        finished = []
+        if max_length is None:
+            max_length = max(lengths)
+        with torch.no_grad():
+            for _ in range(max_length):
+                temp = []
+                for seq, prob, hidden_state in beam:
+                    decoder_input = torch.Tensor([seq[-1]]).unsqueeze(0).to(torch.long)
+                    output, new_hidden = self.forward_step(decoder_input, hidden_state, encoder_outputs, lengths)
+                    output = torch.softmax(output, dim=-1)
+                    values, indices = torch.topk(output, beam_size)
+                    for val, ind in zip(values.squeeze(), indices.squeeze()):
+                        if ind.item() == mapping["</s>"]:
+                            finished.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                        else:
+                            temp.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                beam = sorted(temp, key=lambda x: x[1], reverse=True)[:beam_size]
+
+                # if all sequences have ended, we can stop
+                if not beam:
+                    break
+        res = finished + beam
+        if return_topk:
+            return sorted(res, key=lambda x: x[1], reverse=True)[:beam_size]
+        else:
+            return sorted(res, key=lambda x: x[1], reverse=True)[0]
+
+
+    def forward_step(self, e_prev, s1_prev, f_j, lengths):
+        """
+        @param e_prev: the previous word (batch_size)
+        @param s1_prev: the previous hidden state; 2-tuple of (h, c)?
+        @param f_j: the encoder outputs (batch_size, seq_len, 2*hidden_size)
+        """
+        embedded = self.embedding(e_prev)  # maybe add dropout later
+        # embedded: (batch_size, 1, embedding_size)
+        #print(f"Embedded shape: {embedded.shape}")
+        #print(f"Lengths: {lengths}")
+        #embedded = pack_padded_sequence(embedded, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
+        #print(f"Embedded shape after packing: {embedded.data.shape}")
+        if s1_prev is None:
+            #print("s1_prev is None")
+            e, s1 = self.lstm(embedded)
+        else:
+            #print(f"s1_prev[0] shape: {s1_prev[0].shape}")
+            #s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
+            e, s1 = self.lstm(embedded, s1_prev)
+        # (batch_size, 1, hidden_size), 2-tuple of (h, c)
+        e = e.squeeze(1)
+        # (batch_size, hidden_size)
+        attention_context = self.attention.forward_single(f_j, e)
+        #attention_context = attention_context.squeeze(1)
+        input_lstm = torch.cat((attention_context, e), dim=1)
+        """
+        if s2_prev is None:
+            e, s2 = self.lstm2(input_lstm)
+        else:
+            e, s2 = self.lstm2(input_lstm, s2_prev)
+            """
+        output = self.out(self.outbefore(input_lstm))
+        #output = pad_packed_sequence(output, batch_first=True)
+        return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
 
 
 def eval_model(encoder: nn.Module,
@@ -231,16 +404,21 @@ def train_one_epoch(encoder: nn.Module,
         encoder.train()
         decoder.train()
         source_pad, targ_pad, source_len, targ_len = batch
+        source_pad = source_pad.to(device)
+        targ_pad = targ_pad.to(device)
         # print(t.shape, s.shape, y.shape)
         # loss func needs a row vector converted to long
-        y = targ_pad.squeeze().to(torch.long)
+        y_in_dec = targ_pad.squeeze().to(device)[:, :-1]  # removing eos
         y_enc = encoder(source_pad, source_len)
-        y_dec = decoder(y_enc, targ_len) # dim: (batch_size, seq_len, vocab_size)
+        y_dec = decoder(y_in_dec, targ_len, y_enc)  # dim: (batch_size, seq_len, vocab_size)
+        #y_dec = decoder(y_enc, targ_len)  # dim: (batch_size, seq_len, vocab_size)
         y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
         #for j in range(len(y_dec)):
             #debug = y[:, j]
             #loss+= lossfunc(y_dec[j], y[:, j])
-        loss = lossfunc(y_dec, y) / y.shape[0]  # divide by batch size cause we used summed loss
+        #loss = (lossfunc(y_dec, y) / y.shape[0])  # divide by batch size cause we used summed loss
+        y = targ_pad.squeeze().to(torch.long).to(device)[:, 1:]  # removing the sos
+        loss = lossfunc(y_dec, y)
         print(f"current Loss: {loss}")
         loss.backward()
         optimizer_enc.step()
@@ -270,9 +448,10 @@ def train_one_epoch(encoder: nn.Module,
                         print(
                             f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
                         break
+        """
         if i in checkpoints:
             Loader.save_model(encoder, f"encoder_epoch_{epoch + 1}_batch_{i}")
-            Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")"""
+            Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")
 
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
@@ -284,7 +463,7 @@ def training_routine(encoder: nn.Module,
                      halve_lr: bool,
                      checkpoints: list[list[int]],
                      eval_every_n_batches: int):
-    loss_func = nn.CrossEntropyLoss(reduction="sum", ignore_index=IGNORE_INDEX)
+    loss_func = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
     for name, param in encoder.named_parameters():
         print(f"Parameter name: {name}, Shape: {param.shape}")
     for name, param in decoder.named_parameters():
@@ -297,6 +476,19 @@ def training_routine(encoder: nn.Module,
         train_one_epoch(encoder, decoder, train_dataloader, eval_dataloader, optimizer_enc, optimizer_dec, checkpoints[epoch + 1],
                         loss_func, epoch,
                         eval_every_n_batches, halve_lr)
+
+def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: int, voc: Dictionary):
+    encoder.eval()
+    decoder.eval()
+    for batch in dataloader:
+        source_pad, targ_pad, source_len, targ_len = batch
+        source_pad = source_pad.to(device)
+        targ_pad = targ_pad.to(device)
+        y_enc = encoder(source_pad, source_len)
+        y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
+        print(y_dec)
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -339,9 +531,26 @@ if __name__ == "__main__":
     dataset = RNNDataSet(train_de, train_en)
     torch.save(dataset, "dataset.pkl")"""
     dataset = torch.load("dataset.pkl")
+    device = "cpu"
+    if not torch.backends.mps.is_available():
+        if not torch.backends.mps.is_built():
+            print("MPS not available because the current PyTorch install was not "
+                  "built with MPS enabled.")
+        else:
+            print("MPS not available because the current MacOS version is not 12.3+ "
+                  "and/or you do not have an MPS-enabled device on this machine.")
+
+    else:
+        print("MPS is available.")
+        device = torch.device("cpu")
     data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
-    model_enc = RNNEncoder(len(voc.getDictionary()), 256)
-    model_dec = RNNDecoder(len(voc.getDictionary()), 256)
-    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.001)
-    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.001)
-    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[1], [5,10,15]], 10)
+    """
+    model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
+    model_dec = RNNDecoder_unrolled(len(voc.getDictionary()), 256).to(device)
+    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
+    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
+    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
+    """
+    model_enc = Loader.load_model("encoder_epoch_6_batch_50").to(device)
+    model_dec = Loader.load_model("decoder_epoch_6_batch_50").to(device)
+    beam_wrapper(model_enc, model_dec, data_loader, 5, voc)
