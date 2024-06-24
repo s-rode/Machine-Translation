@@ -21,7 +21,7 @@ DEC_LSTM_SIZE = 259
 ATTN_SIZE = 300
 PATIENCE = 5
 BPE_MERGES = 7000
-IGNORE_INDEX = 1
+IGNORE_INDEX = 3
 
 class RNNDataSet(Dataset):
     def __init__(self, source: list[list[int]], target: list[list[int]]):
@@ -219,7 +219,8 @@ class RNNDecoder_unrolled(nn.Module):
         self.embedding = nn.Embedding(dict_len, embedding_size)
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers, batch_first=True)
         self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
-        self.out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, dict_len)
+        self.before_out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, 512)
+        self.out = nn.Linear(512, dict_len)
 
     def forward(self, input, targ_lengths, f_j):
         """
@@ -235,7 +236,7 @@ class RNNDecoder_unrolled(nn.Module):
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         attention_context = self.attention(f_j, x)
         linear_input = torch.cat((attention_context, x), dim=2)
-        output = self.out(linear_input)
+        output = self.out(self.before_out(linear_input))
 
         return output  # unsqueeze so we can concatenate the outputs later
 
@@ -282,31 +283,16 @@ class RNNDecoder_unrolled(nn.Module):
         """
         embedded = self.embedding(e_prev)  # maybe add dropout later
         # embedded: (batch_size, 1, embedding_size)
-        #print(f"Embedded shape: {embedded.shape}")
-        #print(f"Lengths: {lengths}")
-        #embedded = pack_padded_sequence(embedded, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
-        #print(f"Embedded shape after packing: {embedded.data.shape}")
         if s1_prev is None:
-            #print("s1_prev is None")
             e, s1 = self.lstm(embedded)
         else:
-            #print(f"s1_prev[0] shape: {s1_prev[0].shape}")
-            #s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
             e, s1 = self.lstm(embedded, s1_prev)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
         # (batch_size, hidden_size)
         attention_context = self.attention.forward_single(f_j, s1[0])
-        #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
-        """
-        if s2_prev is None:
-            e, s2 = self.lstm2(input_lstm)
-        else:
-            e, s2 = self.lstm2(input_lstm, s2_prev)
-        """
-        output = self.out(input_lstm)
-        #output = pad_packed_sequence(output, batch_first=True)
+        output = self.out(self.before_out(input_lstm))
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
 
 
@@ -317,7 +303,6 @@ def eval_model(encoder: nn.Module,
                number_of_batches: int):
     encoder.eval()
     decoder.eval()
-    # disable gradient calculation
     total_loss = 0
     num_samples = len(data_loader.dataset)  # number of rows
     total_acc = 0
@@ -325,16 +310,13 @@ def eval_model(encoder: nn.Module,
         for i, batch in enumerate(data_loader):
             if i == number_of_batches:
                 break
-
             source_pad, targ_pad, source_len, targ_len = batch
-            # print(t.shape, s.shape, y.shape)
             # loss func needs a row vector converted to long
             y = targ_pad.squeeze().to(torch.long)
             y_enc = encoder(source_pad, source_len)
             y_dec = decoder(y_enc, targ_len)  # dim: (batch_size, seq_len, vocab_size)
             y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
             total_loss += loss(y_dec, y).item()
-            #total_acc += (y_dec.argmax(1) == y).type(torch.float).sum().item()  # todo: correct????
     # return perplexity and accuracy (e^... since pytorch's cross entropy uses the natural logarithm)
     return np.exp(total_loss / num_samples), (total_acc / num_samples)
 
@@ -357,18 +339,12 @@ def train_one_epoch(encoder: nn.Module,
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
         targ_pad = targ_pad.to(device)
-        # print(t.shape, s.shape, y.shape)
         # loss func needs a row vector converted to long
         y_in_dec = targ_pad.squeeze().to(device)[:, :-1]  # removing eos
         y_enc = encoder(source_pad, source_len)
-        #y_dec = decoder(y_in_dec, targ_len, y_enc)  # dim: (batch_size, seq_len, vocab_size)
-        y_dec = decoder(y_enc, targ_len)
-        #y_dec = decoder(y_enc, targ_len)  # dim: (batch_size, seq_len, vocab_size)
+        y_dec = decoder(y_in_dec, targ_len, y_enc)  # dim: (batch_size, seq_len, vocab_size)
+        #y_dec = decoder(y_enc, targ_len)
         y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
-        #for j in range(len(y_dec)):
-            #debug = y[:, j]
-            #loss+= lossfunc(y_dec[j], y[:, j])
-        #loss = (lossfunc(y_dec, y) / y.shape[0])  # divide by batch size cause we used summed loss
         y = targ_pad.squeeze().to(torch.long).to(device)[:, 1:]  # removing the sos
         loss = lossfunc(y_dec, y)
         print(f"current Loss: {loss}")
@@ -378,29 +354,6 @@ def train_one_epoch(encoder: nn.Module,
         optimizer_dec.step()
         optimizer_dec.zero_grad()
         # evaluate every n updates
-        """if i % eval_every_n_batches == 0:
-            eval_perpl, eval_acc = eval_model(encoder, decoder, eval_dataloader, lossfunc, len(eval_dataloader))
-            print(f"Batch: {i}/{len(dataloader)} Perplexity: {eval_perpl} ,Accuracy {eval_acc}")
-            # check if the current perplexity is still better
-            if eval_perpl < best_perpl or best_perpl == -1:
-                best_perpl = eval_perpl
-                patience = max_patience
-            else:
-                patience -= 1
-                if patience <= 0:
-                    if halve_lr:
-                        # optimizer.param_groups is a list of the different weight groups, but we only have one group
-                        optimizer_dec.param_groups[0]["lr"] /= 2
-                        optimizer_enc.param_groups[0]["lr"] /= 2
-                        print(
-                            f"Reducing learning rate for encoder to {optimizer_enc.param_groups[0]['lr']} and decoder to {optimizer_dec.param_groups[0]['lr']}")
-                        patience = max_patience
-                    else:
-                        # stop training if model isn't improving and we shouldn't halve the lr
-                        print(
-                            f"Stopping training, model not improving. Best perplexity: {best_perpl}, Epoch: {epoch + 1}")
-                        break
-        """
         if i in checkpoints:
             Loader.save_model(encoder, f"encoder3_epoch_{epoch + 1}_batch_{i}")
             Loader.save_model(decoder, f"decoder3_epoch_{epoch + 1}_batch_{i}")
@@ -430,7 +383,7 @@ def training_routine(encoder: nn.Module,
                         eval_every_n_batches, halve_lr)
 
 def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: int, voc: Dictionary):
-    debug = 0
+    debug = 1
     reverse_dict = {v: k for k, v in voc.getDictionary().items()}
     encoder.eval()
     decoder.eval()
@@ -445,9 +398,8 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
             if debug > 0:
                 for i in source_pad[i]:
                     word = i.item()
-                    print(reverse_voc[word], end=" ")
-                for i in y_dec[0]:
-                    print(reverse_voc[i], end=" ")
+                    if word != 3:
+                        print(reverse_voc[word], end=" ")
             mark = False
             newelem = []
             y_dec = y_dec[0]
@@ -461,6 +413,8 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
                 if word[-2:] == "@@":
                     mark = True
             y_dec = newelem
+            if debug > 0:
+                print(y_dec)
             result.append(y_dec[1:])
         return result
 
@@ -549,14 +503,14 @@ if __name__ == "__main__":
         device = torch.device("cpu")
     data_loader = DataLoader(dataset=datasettrain, batch_size=256, shuffle=True, collate_fn=pad)
     data_loader_eval = DataLoader(dataset=dataseteval, batch_size=256, shuffle=False, collate_fn=pad)
-    #model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
-    #model_dec = RNNDecoder(len(voc.getDictionary()), 256).to(device)
-    #optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
-    #optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
+    model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
+    model_dec = RNNDecoder_unrolled(len(voc.getDictionary()), 256).to(device)
+    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
+    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
     #training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
     #model_enc = Loader.load_model("encoder3_epoch_6_batch_50").to(device)
     #model_dec = Loader.load_model("decoder3_epoch_6_batch_50").to(device)
     #beam_wrapper(model_enc, model_dec, data_loader_eval, 5, voc)
-    print(calc_bleus("../config/Models", data_loader_eval, bpe, voc, 5))
+    print(calc_bleus("../config/Models", data_loader_eval, bpe, voc, 15))
 
 
