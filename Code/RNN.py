@@ -2,6 +2,7 @@ import argparse
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pickle as pkl
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
@@ -83,30 +84,8 @@ class RNNEncoder(nn.Module):
         # x shape: (batchsize, seqsize, 2*en_hidden) (bc biderectional)
         return x
 
-"""
-class Attention(nn.Module):
-    def __init__(self, encoder_hidden_size, decoder_hidden_size):
-        super(Attention, self).__init__()
-        self.A = nn.Linear(encoder_hidden_size, ATTN_SIZE).to(device)
-        self.B = nn.Linear(decoder_hidden_size, ATTN_SIZE).to(device)
-        self.V = nn.Linear(ATTN_SIZE, 1).to(device)
-        self.b_small = nn.Parameter(torch.zeros(ATTN_SIZE)).to(device)
 
-    def forward(self, f_j, s_i):
-        #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
-        #s_i: (batch_size, hidden_size)
-        s_i = s_i.unsqueeze(1)
-        # s_i: (batch_size, 1, hidden_size)
-        scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
-        # scores: (batch_size, seq_len, 1)
-        scores = scores.squeeze(2).unsqueeze(1)
-        # scores: (batch_size, 1, seq_len)
-        # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
-        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
-        context = torch.bmm(weights, f_j)
-        #context = torch.sum(weights * f_j, dim=1)
-        return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
-    """
+
 class Attention(nn.Module):
     def __init__(self, encoder_hidden_size, decoder_hidden_size):
         super(Attention, self).__init__()
@@ -116,10 +95,8 @@ class Attention(nn.Module):
         self.b_small = nn.Parameter(torch.zeros(ATTN_SIZE))
 
     def forward(self, f_j, s_i):
-        """
-        f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
-        s_i: (batch_size, hidden_size)
-        """
+        #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
+        #s_i: (batch_size, hidden_size)
         # s_i: (batch_size, 1, hidden_size)
         s_i = s_i.unsqueeze(2)
         f_j = f_j.unsqueeze(1)
@@ -143,14 +120,14 @@ class Attention(nn.Module):
     def forward_single(self, f_j, s_i):
         #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
         #s_i: (batch_size, hidden_size)
-        s_i = s_i.unsqueeze(1)
+        #s_i = s_i.unsqueeze(1)
         # s_i: (batch_size, 1, hidden_size)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
         # scores: (batch_size, seq_len, 1)
         scores = scores.squeeze(2).unsqueeze(1)
         # scores: (batch_size, 1, seq_len)
         # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
-        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
+        weights = torch.softmax(scores, dim=-1)  # since we want softmax over \alpha_i which is the seq_len
         context = torch.bmm(weights, f_j)
         #context = torch.sum(weights * f_j, dim=1)
         return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
@@ -345,7 +322,7 @@ class RNNDecoder_unrolled(nn.Module):
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
         # (batch_size, hidden_size)
-        attention_context = self.attention.forward_single(f_j, e)
+        attention_context = self.attention.forward_single(f_j, s1[0])
         #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
         """
@@ -354,7 +331,7 @@ class RNNDecoder_unrolled(nn.Module):
         else:
             e, s2 = self.lstm2(input_lstm, s2_prev)
             """
-        output = self.out(self.outbefore(input_lstm))
+        output = self.out(input_lstm)
         #output = pad_packed_sequence(output, batch_first=True)
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
 
@@ -480,14 +457,19 @@ def training_routine(encoder: nn.Module,
 def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: int, voc: Dictionary):
     encoder.eval()
     decoder.eval()
+    reverse_voc = {v: k for k, v in voc.getDictionary().items()}
     for batch in dataloader:
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
         targ_pad = targ_pad.to(device)
-        y_enc = encoder(source_pad, source_len)
+        test = source_pad[0]
+        y_enc = encoder(source_pad[0].unsqueeze(0), source_len[0].unsqueeze(0))
         y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
-        print(y_dec)
-
+        for i in source_pad[0]:
+            word = i.item()
+            print(reverse_voc[word], end=" ")
+        for i in y_dec[0]:
+            print(reverse_voc[i], end=" ")
 
 
 if __name__ == "__main__":
