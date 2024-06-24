@@ -8,10 +8,11 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 import numpy as np
 import yaml
+from pathlib import Path
 
 from Blatt3 import FCLayer
 from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
-from Blatt1 import FileHandler as fh1
+from Blatt1 import FileHandler as fh1, Korpus
 from Model import Loader
 
 EN_HIDDEN_SIZE = 257
@@ -34,23 +35,6 @@ class RNNDataSet(Dataset):
 
     def __getitem__(self, index):
         return self.source[index], self.target[index]
-
-
-def bpe_and_to_int(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[list[int]]:
-    text = bpe.applyBPE(text)
-    copy = []
-    for i in range(len(text)):
-        copy.append([])
-        for j in range(len(text[i])):
-            if text[i][j] not in voc.getDictionary():
-                if text[i][j][-2:] == "@@":
-                    copy[i].append(3)  # append <unk>@@
-                else:
-                    copy[i].append(2)  # append <unk>
-            else:
-                copy[i].append(voc.getDictionary()[text[i][j]])
-        copy[i].append(1)  # append </s>
-    return copy
 
 def bpe2(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[list[int]]:
     text = bpe.applyBPE(text)
@@ -113,20 +97,15 @@ class Attention(nn.Module):
         # s_i: (batch_size, 1, hidden_size)
         s_i = s_i.unsqueeze(2)
         f_j = f_j.unsqueeze(1)
-        #print(s_i.shape)
-        #print(f_j.shape)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
         # scores: (batch_size, seq_len, 1)
         scores = scores.squeeze(3)
         # scores: (batch_size, seq_len_src, seq_len_targ)
         # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
         weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
-        #print(weights.shape)
         f_j = f_j.squeeze(1)
-        #print(f_j.shape)
         context = torch.bmm(weights, f_j)
         #context = torch.sum(weights * f_j, dim=1)
-        #print(context.shape)
         return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
 
 
@@ -152,8 +131,6 @@ class RNNDecoder(nn.Module):
         self.embedding = nn.Embedding(dict_len, embedding_size).to(device)
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers).to(device)
         self.attention = Attention(2 * EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE).to(device)
-        #self.lstm2 = nn.LSTM(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE, dropout=dropout, num_layers=num_layers)
-        #self.outbefore = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE).to(device)
         self.out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, dict_len).to(device)
 
     def forward(self, encoder_outputs, lengths, target_tensor=None):
@@ -165,7 +142,6 @@ class RNNDecoder(nn.Module):
         decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=device)
         decoder_input.fill_(0)  # first input is always <s>
         decoder_hidden_1 = None
-        decoder_hidden_2 = None
         decoder_outputs = []
         max_length = max(lengths)
         for i in range(max_length):
@@ -174,8 +150,6 @@ class RNNDecoder(nn.Module):
             if target_tensor is None:
                 _, x = output.topk(1)
                 decoder_input = x.squeeze(-1).detach()  # check if squeeze is correct
-                #if decoder_input == Torch.tensor1:
-                #    break
             else:
                 decoder_input = target_tensor[:, i].unsqueeze(1)
         #return decoder_outputs
@@ -201,7 +175,7 @@ class RNNDecoder(nn.Module):
                     values, indices = torch.topk(output, beam_size)
                     for val, ind in zip(values.squeeze(), indices.squeeze()):
                         if ind.item() == mapping["</s>"]:
-                            finished.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                            finished.append((seq, prob + np.log(val.item()), new_hidden))
                         else:
                             temp.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
                 beam = sorted(temp, key=lambda x: x[1], reverse=True)[:beam_size]
@@ -222,31 +196,18 @@ class RNNDecoder(nn.Module):
         @param s1_prev: the previous hidden state; 2-tuple of (h, c)?
         @param f_j: the encoder outputs (batch_size, seq_len, 2*hidden_size)
         """
+        e_prev = e_prev.to(torch.long)
         embedded = self.embedding(e_prev)  # maybe add dropout later
         # embedded: (batch_size, 1, embedding_size)
-        #print(f"Embedded shape: {embedded.shape}")
-        #print(f"Lengths: {lengths}")
-        #embedded = pack_padded_sequence(embedded, torch.Tensor(lengths), batch_first=True, enforce_sorted=False)
-        #print(f"Embedded shape after packing: {embedded.data.shape}")
         if s1_prev is None:
-            #print("s1_prev is None")
             e, s1 = self.lstm(embedded)
         else:
-            #print(f"s1_prev[0] shape: {s1_prev[0].shape}")
-            #s1_prev = (s1_prev[0].squeeze(1), s1_prev[0].squeeze(1))
             e, s1 = self.lstm(embedded, s1_prev)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
         # (batch_size, hidden_size)
         attention_context = self.attention.forward_single(f_j, s1[0])
-        #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
-        """
-        if s2_prev is None:
-            e, s2 = self.lstm2(input_lstm)
-        else:
-            e, s2 = self.lstm2(input_lstm, s2_prev)
-        """
         output = self.out(input_lstm)
         #output = pad_packed_sequence(output, batch_first=True)
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
@@ -268,14 +229,11 @@ class RNNDecoder_unrolled(nn.Module):
         """
         embedded = self.embedding(input)  # maybe add dropout later
         # embedded: (batch_size, seq_len, embedding_size)
-        #print(f"Embedded shape after packing: {embedded.data.shape}")
         x_pack = pack_padded_sequence(embedded, targ_lengths, batch_first=True, enforce_sorted=False)
         x, (h, c) = self.lstm(x_pack)
         x, _ = pad_packed_sequence(x, batch_first=True)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         attention_context = self.attention(f_j, x)
-        #attention_context = attention_context.squeeze(1)
-        #print(attention_context.shape, x.shape)
         linear_input = torch.cat((attention_context, x), dim=2)
         output = self.out(linear_input)
 
@@ -300,7 +258,7 @@ class RNNDecoder_unrolled(nn.Module):
                     values, indices = torch.topk(output, beam_size)
                     for val, ind in zip(values.squeeze(), indices.squeeze()):
                         if ind.item() == mapping["</s>"]:
-                            finished.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
+                            finished.append((seq, prob + np.log(val.item()), new_hidden))
                         else:
                             temp.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
                 beam = sorted(temp, key=lambda x: x[1], reverse=True)[:beam_size]
@@ -309,6 +267,7 @@ class RNNDecoder_unrolled(nn.Module):
                 if not beam:
                     break
         res = finished + beam
+        # remove the eos token
         if return_topk:
             return sorted(res, key=lambda x: x[1], reverse=True)[:beam_size]
         else:
@@ -471,20 +430,61 @@ def training_routine(encoder: nn.Module,
                         eval_every_n_batches, halve_lr)
 
 def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: int, voc: Dictionary):
+    debug = 0
+    reverse_dict = {v: k for k, v in voc.getDictionary().items()}
     encoder.eval()
     decoder.eval()
     reverse_voc = {v: k for k, v in voc.getDictionary().items()}
+    result = []
     for batch in dataloader:
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
         for i in range(len(source_pad)):
             y_enc = encoder(source_pad[i].unsqueeze(0), source_len[i].unsqueeze(0))
             y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
-            for i in source_pad[i]:
-                word = i.item()
-                print(reverse_voc[word], end=" ")
-            for i in y_dec[0]:
-                print(reverse_voc[i], end=" ")
+            if debug > 0:
+                for i in source_pad[i]:
+                    word = i.item()
+                    print(reverse_voc[word], end=" ")
+                for i in y_dec[0]:
+                    print(reverse_voc[i], end=" ")
+            mark = False
+            newelem = []
+            y_dec = y_dec[0]
+            y_dec = [reverse_dict[i] for i in y_dec]
+            for word in y_dec:
+                if mark:
+                    newelem[-1] = newelem[-1][:-2] + word  # remove @@ from the last element and merge
+                    mark = False
+                else:
+                    newelem.append(word)
+                if word[-2:] == "@@":
+                    mark = True
+            y_dec = newelem
+            result.append(y_dec[1:])
+        return result
+
+
+def calc_bleus(model_path, dataloader, bpe, voc, beam_size: int):
+    # listing all modelnames in the directory
+    target_eval = fh1.read_file_words(args.eval_en)
+    path = Path(model_path)
+    decoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("encoder")]
+    encoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("decoder")]
+    print("Models loaded")
+    # list of bleu_scores archieved with the different models
+    bleu_list = []
+    for enc_name, dec_name in zip(encoder_model_names, decoder_model_names):
+        encoder = Loader.load_model(enc_name)
+        decoder = Loader.load_model(dec_name)
+        print(f"Model: {decoder_model_names}, {encoder_model_names}")
+        # translating setences one by one
+        hyp = beam_wrapper(encoder, decoder, dataloader, beam_size, voc)
+        korp = Korpus(target_eval, hyp)
+        print(f"BLEU: {korp.bleu4()}")
+        bleu_list.append((korp.bleu4(), dec_name, enc_name))
+    return bleu_list
+
 
 
 if __name__ == "__main__":
@@ -548,12 +548,15 @@ if __name__ == "__main__":
         print("MPS is available.")
         device = torch.device("cpu")
     data_loader = DataLoader(dataset=datasettrain, batch_size=256, shuffle=True, collate_fn=pad)
-    data_loader_eval = DataLoader(dataset=dataseteval, batch_size=256, shuffle=True, collate_fn=pad)
-    model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
-    model_dec = RNNDecoder(len(voc.getDictionary()), 256).to(device)
-    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
-    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
-    training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
-    #model_enc = Loader.load_model("encoder2_epoch_6_batch_50").to(device)
-    #model_dec = Loader.load_model("decoder2_epoch_6_batch_50").to(device)
+    data_loader_eval = DataLoader(dataset=dataseteval, batch_size=256, shuffle=False, collate_fn=pad)
+    #model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
+    #model_dec = RNNDecoder(len(voc.getDictionary()), 256).to(device)
+    #optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
+    #optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
+    #training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
+    #model_enc = Loader.load_model("encoder3_epoch_6_batch_50").to(device)
+    #model_dec = Loader.load_model("decoder3_epoch_6_batch_50").to(device)
     #beam_wrapper(model_enc, model_dec, data_loader_eval, 5, voc)
+    print(calc_bleus("../config/Models", data_loader_eval, bpe, voc, 5))
+
+
