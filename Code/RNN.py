@@ -20,7 +20,7 @@ DEC_LSTM_SIZE = 259
 ATTN_SIZE = 300
 PATIENCE = 5
 BPE_MERGES = 7000
-IGNORE_INDEX = 0
+IGNORE_INDEX = 1
 
 class RNNDataSet(Dataset):
     def __init__(self, source: list[list[int]], target: list[list[int]]):
@@ -50,6 +50,19 @@ def bpe_and_to_int(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[lis
             else:
                 copy[i].append(voc.getDictionary()[text[i][j]])
         copy[i].append(1)  # append </s>
+    return copy
+
+def bpe2(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[list[int]]:
+    text = bpe.applyBPE(text)
+    text2 = voc.filterInput(text)
+    copy = []
+    for i in range(len(text2)):
+        copy.append([])
+        for j in range(len(text2[i])):
+            if text2[i][j] not in voc.getDictionary():
+                raise ValueError(f"Word {text2[i][j]} not in dictionary")
+            copy[i].append(voc.getDictionary()[text2[i][j]])
+        copy[i].append(1)
     return copy
 
 
@@ -140,8 +153,8 @@ class RNNDecoder(nn.Module):
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers).to(device)
         self.attention = Attention(2 * EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE).to(device)
         #self.lstm2 = nn.LSTM(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE, dropout=dropout, num_layers=num_layers)
-        self.outbefore = nn.Linear(2 * EN_HIDDEN_SIZE+ DEC_HIDDEN_SIZE, DEC_LSTM_SIZE).to(device)
-        self.out = nn.Linear(DEC_LSTM_SIZE, dict_len).to(device)
+        #self.outbefore = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, DEC_LSTM_SIZE).to(device)
+        self.out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, dict_len).to(device)
 
     def forward(self, encoder_outputs, lengths, target_tensor=None):
         """
@@ -161,6 +174,8 @@ class RNNDecoder(nn.Module):
             if target_tensor is None:
                 _, x = output.topk(1)
                 decoder_input = x.squeeze(-1).detach()  # check if squeeze is correct
+                #if decoder_input == Torch.tensor1:
+                #    break
             else:
                 decoder_input = target_tensor[:, i].unsqueeze(1)
         #return decoder_outputs
@@ -223,7 +238,7 @@ class RNNDecoder(nn.Module):
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         e = e.squeeze(1)
         # (batch_size, hidden_size)
-        attention_context = self.attention(f_j, e)
+        attention_context = self.attention.forward_single(f_j, s1[0])
         #attention_context = attention_context.squeeze(1)
         input_lstm = torch.cat((attention_context, e), dim=1)
         """
@@ -231,8 +246,8 @@ class RNNDecoder(nn.Module):
             e, s2 = self.lstm2(input_lstm)
         else:
             e, s2 = self.lstm2(input_lstm, s2_prev)
-            """
-        output = self.out(self.outbefore(input_lstm))
+        """
+        output = self.out(input_lstm)
         #output = pad_packed_sequence(output, batch_first=True)
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
 
@@ -330,7 +345,7 @@ class RNNDecoder_unrolled(nn.Module):
             e, s2 = self.lstm2(input_lstm)
         else:
             e, s2 = self.lstm2(input_lstm, s2_prev)
-            """
+        """
         output = self.out(input_lstm)
         #output = pad_packed_sequence(output, batch_first=True)
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
@@ -387,7 +402,8 @@ def train_one_epoch(encoder: nn.Module,
         # loss func needs a row vector converted to long
         y_in_dec = targ_pad.squeeze().to(device)[:, :-1]  # removing eos
         y_enc = encoder(source_pad, source_len)
-        y_dec = decoder(y_in_dec, targ_len, y_enc)  # dim: (batch_size, seq_len, vocab_size)
+        #y_dec = decoder(y_in_dec, targ_len, y_enc)  # dim: (batch_size, seq_len, vocab_size)
+        y_dec = decoder(y_enc, targ_len)
         #y_dec = decoder(y_enc, targ_len)  # dim: (batch_size, seq_len, vocab_size)
         y_dec = torch.permute(y_dec, (0, 2, 1))  # dim: (batch_size, vocab_size, seq_len) needed for cross entropy
         #for j in range(len(y_dec)):
@@ -427,8 +443,8 @@ def train_one_epoch(encoder: nn.Module,
                         break
         """
         if i in checkpoints:
-            Loader.save_model(encoder, f"encoder_epoch_{epoch + 1}_batch_{i}")
-            Loader.save_model(decoder, f"decoder_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(encoder, f"encoder3_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(decoder, f"decoder3_epoch_{epoch + 1}_batch_{i}")
 
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
@@ -461,15 +477,14 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
     for batch in dataloader:
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
-        targ_pad = targ_pad.to(device)
-        test = source_pad[0]
-        y_enc = encoder(source_pad[0].unsqueeze(0), source_len[0].unsqueeze(0))
-        y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
-        for i in source_pad[0]:
-            word = i.item()
-            print(reverse_voc[word], end=" ")
-        for i in y_dec[0]:
-            print(reverse_voc[i], end=" ")
+        for i in range(len(source_pad)):
+            y_enc = encoder(source_pad[i].unsqueeze(0), source_len[i].unsqueeze(0))
+            y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
+            for i in source_pad[i]:
+                word = i.item()
+                print(reverse_voc[word], end=" ")
+            for i in y_dec[0]:
+                print(reverse_voc[i], end=" ")
 
 
 if __name__ == "__main__":
@@ -506,13 +521,20 @@ if __name__ == "__main__":
     else:
         train_de = fh1.read_file_words(args.train_de)
         train_en = fh1.read_file_words(args.train_en)
-        train_de = bpe_and_to_int(train_de, voc, bpe)
-        train_en = bpe_and_to_int(train_en, voc, bpe)
-        fh1.write_ints_to_file("train_de_int.txt", train_de)
-        fh1.write_ints_to_file("train_en_int.txt", train_en)
-    dataset = RNNDataSet(train_de, train_en)
-    torch.save(dataset, "dataset.pkl")"""
-    dataset = torch.load("dataset.pkl")
+        train_de = bpe2(train_de, voc, bpe)
+        train_en = bpe2(train_en, voc, bpe)
+        eval_de = bpe2(eval_de, voc, bpe)
+        eval_en = bpe2(eval_en, voc, bpe)
+        fh1.write_ints_to_file("train2_de_int.txt", train_de)
+        fh1.write_ints_to_file("train2_en_int.txt", train_en)
+        fh1.write_ints_to_file("eval2_de_int.txt", eval_de)
+        fh1.write_ints_to_file("eval2_en_int.txt", eval_en)
+    datasettrain = RNNDataSet(train_de, train_en)
+    dataseteval = RNNDataSet(eval_de, eval_en)
+    torch.save(datasettrain, "dataset_train.pkl")
+    torch.save(dataseteval, "dataset_eval.pkl")"""
+    datasettrain = torch.load("dataset_train.pkl")
+    dataseteval = torch.load("dataset_eval.pkl")
     device = "cpu"
     if not torch.backends.mps.is_available():
         if not torch.backends.mps.is_built():
@@ -525,14 +547,13 @@ if __name__ == "__main__":
     else:
         print("MPS is available.")
         device = torch.device("cpu")
-    data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
-    """
+    data_loader = DataLoader(dataset=datasettrain, batch_size=256, shuffle=True, collate_fn=pad)
+    data_loader_eval = DataLoader(dataset=dataseteval, batch_size=256, shuffle=True, collate_fn=pad)
     model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
-    model_dec = RNNDecoder_unrolled(len(voc.getDictionary()), 256).to(device)
+    model_dec = RNNDecoder(len(voc.getDictionary()), 256).to(device)
     optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
     optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
     training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
-    """
-    model_enc = Loader.load_model("encoder_epoch_6_batch_50").to(device)
-    model_dec = Loader.load_model("decoder_epoch_6_batch_50").to(device)
-    beam_wrapper(model_enc, model_dec, data_loader, 5, voc)
+    #model_enc = Loader.load_model("encoder2_epoch_6_batch_50").to(device)
+    #model_dec = Loader.load_model("decoder2_epoch_6_batch_50").to(device)
+    #beam_wrapper(model_enc, model_dec, data_loader_eval, 5, voc)
