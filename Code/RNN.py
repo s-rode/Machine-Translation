@@ -42,6 +42,7 @@ def bpe2(text: list[list[str]], voc: Dictionary, bpe: BPE) -> list[list[int]]:
     copy = []
     for i in range(len(text2)):
         copy.append([])
+        copy[i].append(0)
         for j in range(len(text2[i])):
             if text2[i][j] not in voc.getDictionary():
                 raise ValueError(f"Word {text2[i][j]} not in dictionary")
@@ -72,7 +73,7 @@ class RNNEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor, lengths: torch.Tensor):
         # x is a batch of sequences
-        # x shape: (batch_size, seq_len)
+        # x shape: (batch_size, max(!)seq_len
         x = self.embedding(x)
         # x shape: (batch_size, seq_len, embedding_size)
         x_pack = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
@@ -92,21 +93,23 @@ class Attention(nn.Module):
         self.b_small = nn.Parameter(torch.zeros(ATTN_SIZE))
 
     def forward(self, f_j, s_i):
-        #f_j: (batch_size, seq_len, 2*hidden_size) because of bidirectional
-        #s_i: (batch_size, hidden_size)
-        # s_i: (batch_size, 1, hidden_size)
+        #f_j: (batch_size, seq_len_src, 2*hidden_size) because of bidirectional
+        #s_i: (batch_size, seq_len_trg, hidden_size)
         s_i = s_i.unsqueeze(2)
+        # s_i: (batch_size, seq_len_targ, 1, hidden_size)
         f_j = f_j.unsqueeze(1)
+        # f_j: (batch_size, 1, seq_len_src, 2*hidden_size)
         scores = self.V(torch.tanh(self.A(f_j) + self.B(s_i) + self.b_small))
-        # scores: (batch_size, seq_len, 1)
+        # scores: (batch_size, seq_len_in, seq_len_out, 1)
         scores = scores.squeeze(3)
-        # scores: (batch_size, seq_len_src, seq_len_targ)
+        # scores: (batch_size, seq_len_targ, seq_len_src)
         # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
-        weights = torch.softmax(scores, dim=1)  # since we want softmax over \alpha_i which is the seq_len
+        # todo maske
+        weights = torch.softmax(scores, dim=-1)  # since we want softmax over \alpha_i which is the seq_len_src
         f_j = f_j.squeeze(1)
         context = torch.bmm(weights, f_j)
-        #context = torch.sum(weights * f_j, dim=1)
-        return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
+        # context: (batch_size, seq_len_targ, 2*hidden_size)
+        return context
 
 
     def forward_single(self, f_j, s_i):
@@ -218,7 +221,7 @@ class RNNDecoder_unrolled(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_size)
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers, batch_first=True)
-        self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
+        self.attention = Attention(2 * EN_HIDDEN_SIZE, DEC_HIDDEN_SIZE)
         self.before_out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, 512)
         self.out = nn.Linear(512, dict_len)
 
@@ -235,8 +238,8 @@ class RNNDecoder_unrolled(nn.Module):
         x, _ = pad_packed_sequence(x, batch_first=True)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         attention_context = self.attention(f_j, x)
-        linear_input = torch.cat((attention_context, x), dim=2)
-        output = self.out(self.before_out(linear_input))
+        linear_input = torch.cat((attention_context, x), dim=2)  # todo: maybe add
+        output = self.out(self.before_out(linear_input))  # todo: func
 
         return output  # unsqueeze so we can concatenate the outputs later
 
@@ -259,7 +262,10 @@ class RNNDecoder_unrolled(nn.Module):
                     values, indices = torch.topk(output, beam_size)
                     for val, ind in zip(values.squeeze(), indices.squeeze()):
                         if ind.item() == mapping["</s>"]:
-                            finished.append((seq, prob + np.log(val.item()), new_hidden))
+                            new_prob = prob + np.log(val.item())
+                            # normalize by length
+                            new_prob = new_prob / len(seq)
+                            finished.append((seq, new_prob, new_hidden))
                         else:
                             temp.append((seq + [ind.item()], prob + np.log(val.item()), new_hidden))
                 beam = sorted(temp, key=lambda x: x[1], reverse=True)[:beam_size]
@@ -329,9 +335,6 @@ def train_one_epoch(encoder: nn.Module,
                     optimizer_dec: torch.optim,
                     checkpoints: list[int],
                     lossfunc: nn.Module, epoch: int, eval_every_n_batches: int, halve_lr: bool = True):
-    best_perpl = -1
-    max_patience = PATIENCE  # maybe change later
-    patience = max_patience
     for i, batch in enumerate(dataloader):
         # set model to training mode to ensure that the gradient tracking is on
         encoder.train()
@@ -355,8 +358,8 @@ def train_one_epoch(encoder: nn.Module,
         optimizer_dec.zero_grad()
         # evaluate every n updates
         if i in checkpoints:
-            Loader.save_model(encoder, f"encoder3_epoch_{epoch + 1}_batch_{i}")
-            Loader.save_model(decoder, f"decoder3_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(encoder, f"encoder4_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(decoder, f"decoder4_epoch_{epoch + 1}_batch_{i}")
 
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
@@ -511,6 +514,6 @@ if __name__ == "__main__":
     #model_enc = Loader.load_model("encoder3_epoch_6_batch_50").to(device)
     #model_dec = Loader.load_model("decoder3_epoch_6_batch_50").to(device)
     #beam_wrapper(model_enc, model_dec, data_loader_eval, 5, voc)
-    print(calc_bleus("../config/Models", data_loader_eval, bpe, voc, 15))
+    print(calc_bleus("../config/Models", data_loader_eval, bpe, voc, 10))
 
 
