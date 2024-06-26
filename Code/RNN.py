@@ -15,12 +15,12 @@ from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
 from Blatt1 import FileHandler as fh1, Korpus
 from Model import Loader
 
-debug_level = 1
+debug_level = 0
 
-EN_HIDDEN_SIZE = 257
-DEC_HIDDEN_SIZE = 258
-DEC_LSTM_SIZE = 259
-ATTN_SIZE = 300
+EN_HIDDEN_SIZE = 256
+DEC_HIDDEN_SIZE = 256
+DEC_LSTM_SIZE = 256
+ATTN_SIZE = 256
 PATIENCE = 5
 BPE_MERGES = 7000
 IGNORE_INDEX = 3
@@ -75,7 +75,7 @@ class RNNEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor, lengths: torch.Tensor):
         # x is a batch of sequences
-        # x shape: (batch_size, max(!)seq_len
+        # x shape: (batch_size, seq_len)
         x = self.embedding(x)
         # x shape: (batch_size, seq_len, embedding_size)
         x_pack = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
@@ -111,7 +111,7 @@ class Attention(nn.Module):
         f_j = f_j.squeeze(1)
         context = torch.bmm(weights, f_j)
         # context: (batch_size, seq_len_targ, 2*hidden_size)
-        return context
+        return context.squeeze(1)
 
 
     def forward_single(self, f_j, s_i):
@@ -223,11 +223,11 @@ class RNNDecoder_unrolled(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(dict_len, embedding_size)
         self.lstm = nn.LSTM(embedding_size, DEC_HIDDEN_SIZE, dropout=dropout, num_layers=num_layers, batch_first=True)
-        self.attention = Attention(2 * EN_HIDDEN_SIZE, DEC_HIDDEN_SIZE)
-        self.before_out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, 512)
-        self.out = nn.Linear(512, dict_len)
+        self.attention = Attention(2*EN_HIDDEN_SIZE,DEC_HIDDEN_SIZE)
+        self.out = nn.Linear(2 * EN_HIDDEN_SIZE + DEC_HIDDEN_SIZE, dict_len)
 
     def forward(self, input, targ_lengths, f_j):
+
         """
         @param input: the whole sequence
         @param targ_lengths: the lengths of the sequences
@@ -240,10 +240,10 @@ class RNNDecoder_unrolled(nn.Module):
         x, _ = pad_packed_sequence(x, batch_first=True)
         # (batch_size, 1, hidden_size), 2-tuple of (h, c)
         attention_context = self.attention(f_j, x)
-        linear_input = torch.cat((attention_context, x), dim=2)  # todo: maybe add
-        output = self.out(self.before_out(linear_input))  # todo: func
+        linear_input = torch.cat((attention_context, x), dim=2)
+        output = self.out(linear_input)
 
-        return output  # unsqueeze so we can concatenate the outputs later
+        return output  # unsqueeze so we can concatenate the outputs
 
     def forward_beam_search(self, encoder_outputs, lengths, beam_size: int, voc: Dictionary, max_length=None, return_topk = False):
         if debug_level > 0:
@@ -288,6 +288,7 @@ class RNNDecoder_unrolled(nn.Module):
             return sorted(res, key=lambda x: x[1], reverse=True)[0]
 
 
+
     def forward_step(self, e_prev, s1_prev, f_j, lengths):
         """
         @param e_prev: the previous word (batch_size)
@@ -305,7 +306,7 @@ class RNNDecoder_unrolled(nn.Module):
         # (batch_size, hidden_size)
         attention_context = self.attention.forward_single(f_j, s1[0])
         input_lstm = torch.cat((attention_context, e), dim=1)
-        output = self.out(self.before_out(input_lstm))
+        output = self.out(input_lstm)
         return output.unsqueeze(1), s1  # unsqueeze so we can concatenate the outputs later
 
 
@@ -365,8 +366,8 @@ def train_one_epoch(encoder: nn.Module,
         optimizer_dec.zero_grad()
         # evaluate every n updates
         if i in checkpoints:
-            Loader.save_model(encoder, f"encoder4_epoch_{epoch + 1}_batch_{i}")
-            Loader.save_model(decoder, f"decoder4_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(encoder, f"encode_epoch_{epoch + 1}_batch_{i}")
+            Loader.save_model(decoder, f"decode_epoch_{epoch + 1}_batch_{i}")
 
 def training_routine(encoder: nn.Module,
                      decoder: nn.Module,
@@ -403,7 +404,7 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
         for i in range(len(source_pad)):
-            if debug_level > 0:
+            if debug > 0:
                 print(f"sentence to translate: ")
                 source_trans = [reverse_voc[i.item()] for i in source_pad[i] if i.item() != 3]
                 print(source_trans)
@@ -427,20 +428,31 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
             result.append(y_dec[1:])
         return result
 
+# Extract the epoch and batch numbers from the model name
+def extract_numbers(name):
+    parts = name.split('_')
+    epoch_number = int(parts[2])
+    batch_number = int(parts[4])
+    return (epoch_number, batch_number)
+
+
 
 def calc_bleus(model_path, dataloader, bpe, voc, beam_size: int):
     # listing all modelnames in the directory
     target_eval = fh1.read_file_words(args.eval_en)
     path = Path(model_path)
-    decoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("encoder")]
-    encoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("decoder")]
+    decoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("encode")]
+    encoder_model_names = [file.name for file in path.rglob('*') if file.is_file() and not file.name.startswith(".") and not file.name.startswith("decode")]
+    # Sort the model names based on the epoch and batch numbers
+    encoder_model_names = sorted(encoder_model_names, key=extract_numbers)
+    decoder_model_names = sorted(decoder_model_names, key=extract_numbers)
     print("Models loaded")
     # list of bleu_scores archieved with the different models
     bleu_list = []
     for enc_name, dec_name in zip(encoder_model_names, decoder_model_names):
         encoder = Loader.load_model(enc_name)
         decoder = Loader.load_model(dec_name)
-        print(f"Model: {decoder_model_names}, {encoder_model_names}")
+        print(f"Model: {dec_name}, {enc_name}")
         # translating setences one by one
         hyp = beam_wrapper(encoder, decoder, dataloader, beam_size, voc)
         korp = Korpus(target_eval, hyp)
@@ -458,46 +470,45 @@ if __name__ == "__main__":
     parser.add_argument("--eval_en", type=str, help="path to en evaluation data")
     parser.add_argument("--bpe", type=str, help="name of bpe file")
     parser.add_argument("--voc", type=str, help="name of voc file")
-    parser.add_argument("--train_de_int", type=str, help="path to de training data")
-    parser.add_argument("--train_en_int", type=str, help="path to en training data")
+    parser.add_argument("--train_dataset", type=str, help="path to de training data")
+    parser.add_argument("--eval_dataset", type=str, help="path to en training data")
+    parser.add_argument("--should_train", action="store_true", help="train the model?")
     args = parser.parse_args()
 
     # load or create BPE
     if args.bpe is not None:
+        print("Loading BPE")
         bpe = Loader.load_bpe(args.bpe)
     else:
+        print("Creating BPE")
         bpe = Loader.save_bpe(args.train_de, args.train_en, "bpe.pkl", BPE_MERGES)
 
     # load or create vocabulary
     if args.voc is not None:
+        print("Loading Vocabulary")
         voc = Loader.load_voc(args.voc)
     else:
+        print("Creating Vocabulary")
         voc = Loader.save_voc(args.train_de, args.train_en, "voc.pkl", bpe)
 
     # create dataset
-    """
-    eval_de = fh1.read_file_words(args.eval_de)
-    eval_en = fh1.read_file_words(args.eval_en)
-    if args.train_de_int is not None:
-        train_de = fh1.read_file_ints(args.train_de_int)
-        train_en = fh1.read_file_ints(args.train_en_int)
+    if args.train_dataset and args.eval_dataset is not None:
+        dataset = torch.load(args.train_dataset)
+        dataseteval = torch.load(args.eval_dataset)
     else:
+        print("Creating dataset")
         train_de = fh1.read_file_words(args.train_de)
         train_en = fh1.read_file_words(args.train_en)
         train_de = bpe2(train_de, voc, bpe)
         train_en = bpe2(train_en, voc, bpe)
+        eval_de = fh1.read_file_words(args.eval_de)
+        eval_en = fh1.read_file_words(args.eval_en)
         eval_de = bpe2(eval_de, voc, bpe)
         eval_en = bpe2(eval_en, voc, bpe)
-        fh1.write_ints_to_file("train2_de_int.txt", train_de)
-        fh1.write_ints_to_file("train2_en_int.txt", train_en)
-        fh1.write_ints_to_file("eval2_de_int.txt", eval_de)
-        fh1.write_ints_to_file("eval2_en_int.txt", eval_en)
-    datasettrain = RNNDataSet(train_de, train_en)
-    dataseteval = RNNDataSet(eval_de, eval_en)
-    torch.save(datasettrain, "dataset_train.pkl")
-    torch.save(dataseteval, "dataset_eval.pkl")"""
-    datasettrain = torch.load("dataset_train.pkl")
-    dataseteval = torch.load("dataset_eval.pkl")
+        dataset = RNNDataSet(train_de, train_en)
+        torch.save(dataset, "../config/dataset_t.pkl")
+        dataseteval = RNNDataSet(eval_de, eval_en)
+        torch.save(dataseteval, "../config/dataset_e.pkl")
     device = "cpu"
     if not torch.backends.mps.is_available():
         if not torch.backends.mps.is_built():
@@ -510,13 +521,15 @@ if __name__ == "__main__":
     else:
         print("MPS is available.")
         device = torch.device("cpu")
-    data_loader = DataLoader(dataset=datasettrain, batch_size=256, shuffle=True, collate_fn=pad)
+    data_loader = DataLoader(dataset=dataset, batch_size=256, shuffle=True, collate_fn=pad)
     data_loader_eval = DataLoader(dataset=dataseteval, batch_size=256, shuffle=False, collate_fn=pad)
-    model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
-    model_dec = RNNDecoder_unrolled(len(voc.getDictionary()), 256).to(device)
-    optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.003)
-    optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.003)
-    #training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[]], 10)
+    if args.should_train:
+        print("Training model")
+        model_enc = RNNEncoder(len(voc.getDictionary()), 256).to(device)
+        model_dec = RNNDecoder_unrolled(len(voc.getDictionary()), 256).to(device)
+        optimizer_enc = torch.optim.Adam(model_enc.parameters(), lr=0.005)
+        optimizer_dec = torch.optim.Adam(model_dec.parameters(), lr=0.005)
+        training_routine(model_enc, model_dec, data_loader, data_loader, optimizer_enc, optimizer_dec, 10, True, [[], [],[],[50],[],[],[50],[50],[],[1],[],[],[1]], 10)
     #model_enc = Loader.load_model("encoder3_epoch_6_batch_50").to(device)
     #model_dec = Loader.load_model("decoder3_epoch_6_batch_50").to(device)
     #beam_wrapper(model_enc, model_dec, data_loader_eval, 5, voc)
