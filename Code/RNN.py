@@ -15,6 +15,8 @@ from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
 from Blatt1 import FileHandler as fh1, Korpus
 from Model import Loader
 
+debug_level = 1
+
 EN_HIDDEN_SIZE = 257
 DEC_HIDDEN_SIZE = 258
 DEC_LSTM_SIZE = 259
@@ -244,6 +246,8 @@ class RNNDecoder_unrolled(nn.Module):
         return output  # unsqueeze so we can concatenate the outputs later
 
     def forward_beam_search(self, encoder_outputs, lengths, beam_size: int, voc: Dictionary, max_length=None, return_topk = False):
+        if debug_level > 0:
+            rev_voc = {v: k for k, v in voc.getDictionary().items()}
         batch_size = encoder_outputs.shape[0]
         decoder_input = torch.empty(batch_size, 1, dtype=torch.long, device=device)
         decoder_input.fill_(0)  # first input is always <s>
@@ -274,6 +278,9 @@ class RNNDecoder_unrolled(nn.Module):
                 if not beam:
                     break
         res = finished + beam
+        if debug_level > 0:
+            for i in range(len(res)):
+                print([rev_voc[j] for j in res[i][0]])
         # remove the eos token
         if return_topk:
             return sorted(res, key=lambda x: x[1], reverse=True)[:beam_size]
@@ -396,13 +403,12 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
         source_pad, targ_pad, source_len, targ_len = batch
         source_pad = source_pad.to(device)
         for i in range(len(source_pad)):
+            if debug_level > 0:
+                print(f"sentence to translate: ")
+                source_trans = [reverse_voc[i.item()] for i in source_pad[i] if i.item() != 3]
+                print(source_trans)
             y_enc = encoder(source_pad[i].unsqueeze(0), source_len[i].unsqueeze(0))
             y_dec = decoder.forward_beam_search(y_enc, targ_len, beam_size, voc)
-            if debug > 0:
-                for i in source_pad[i]:
-                    word = i.item()
-                    if word != 3:
-                        print(reverse_voc[word], end=" ")
             mark = False
             newelem = []
             y_dec = y_dec[0]
