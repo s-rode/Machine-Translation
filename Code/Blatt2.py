@@ -189,11 +189,12 @@ class Dictionary:
     def buildDictdict(self, text: list[list[str]]) -> dict[str, int]:
         # bidirectional map between Strings and indices
         dictdict = {}
-        counter = 4
+        counter = 5
         dictdict["<s>"] = 0
         dictdict["</s>"] = 1
         dictdict["<unk>"] = 2
         dictdict["<unk>@@"] = 3
+        dictdict["<pad>"] = 4
         inputList = self.splitintosubwords(text)
         for i in range(len(inputList)):
             for j in range(len(inputList[i])):
