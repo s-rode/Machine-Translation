@@ -94,6 +94,35 @@ class RNNEncoder(nn.Module):
         return x
 
 
+class DotAttention(nn.Module):
+    def init(self, encoder_hidden_size, decoder_hidden_size):
+        super(DotAttention, self).init()
+        if encoder_hidden_size != decoder_hidden_size:
+            raise ValueError
+
+
+def forward(self, f_j, s_i, mask_f_j, mask_s_i):
+    #f_j: (batch_size, seq_len_src, hidden_size)
+    #s_i: (batch_size, seq_len_tgt, hidden_size)
+    # s_i: (batch_size, 1, hidden_size)
+    # mask_f_j = (batch_size, seq_len_src) type bool
+    # mask_s_i = (batch_size, seq_len_tgt) type bool
+    scores = torch.bmm(s_i, f_j.transpose(1, 2))
+    # scores: (batch_size, seq_len_tgt, seq_len_src)
+    # unsqueeze for outer product (scores * f_j) which equals the sum over the seq_len
+    mask = mask_f_j.unsqueeze(1) + mask_s_i.unsqueeze(2)
+    scores.masked_fill_(mask, float("-inf"))
+    weights = torch.softmax(scores, dim=-1)  # since we want softmax over \alpha_i which is the seq_len
+    weights = torch.where(torch.isnan(weights), torch.zeros_like(weights),
+                          weights)  # 0/0 is supposed to be 0 in our case
+    #print(weights.shape)
+    #print(f_j.shape)
+    context = torch.bmm(weights, f_j)
+    #context = torch.sum(weights * f_j, dim=1)
+    #print(context.shape)
+    return context.squeeze(1)  # 2*EN_HIDDEN_SIZE
+
+
 class Attention(nn.Module):
     def __init__(self, encoder_hidden_size, decoder_hidden_size):
         super(Attention, self).__init__()
@@ -475,7 +504,7 @@ def beam_wrapper(encoder: nn.Module, decoder: nn.Module, dataloader, beam_size: 
             y_dec = newelem
             #print(y_dec)
             result.append(y_dec[1:])
-        return result
+    return result
 
 
 # Extract the epoch and batch numbers from the model name
@@ -526,7 +555,7 @@ def save_translation(model_path, dataloader, bpe, voc, beam_size: int):
         print(f"Model: {dec_name}, {enc_name}")
         # translating setences one by one
         hyp = beam_wrapper(encoder, decoder, dataloader, beam_size, voc)
-        with open(f"../config/translations/{dec_name}_{enc_name}_translation2.txt", "w") as f:
+        with open(f"../config/translations/{dec_name}_{enc_name}comp_translation2.txt", "w") as f:
             for sentence in hyp:
                 f.write(" ".join(sentence) + "\n")
 
@@ -584,7 +613,7 @@ if __name__ == "__main__":
         comp_de = fh1.read_file_words(args.comp_set)
         comp_de = bpe2(comp_de, voc, bpe)
         comp_dataset = RNNDataSet(comp_de, comp_de)
-        dataloader_comp = DataLoader(dataset=comp_dataset, batch_size=256, shuffle=False, collate_fn=pad)
+        dataloader_comp = DataLoader(dataset=comp_dataset, batch_size=975, shuffle=False, collate_fn=pad)
     device = "cpu"
     if not torch.backends.mps.is_available():
         if not torch.backends.mps.is_built():
