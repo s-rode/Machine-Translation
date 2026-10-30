@@ -2,6 +2,8 @@
 
 A university team project exploring neural machine translation between German and English. We built and compared a feed-forward translation model and an LSTM-based encoder–decoder model with cross-attention.
 
+![Neural machine translation pipeline with preprocessing, model alternatives, decoding and evaluation](docs/images/translation-pipeline.png)
+
 The project covers the translation pipeline from preprocessing to evaluation:
 
 - **Preprocessing:** byte-pair encoding, vocabulary construction, and batching.

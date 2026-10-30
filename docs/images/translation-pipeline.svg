@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1900 680" width="1900" height="680" role="img" aria-labelledby="title desc">
+  <title id="title">Neural machine translation pipeline</title>
+  <desc id="desc">A source sentence is processed using byte-pair encoding and a vocabulary, then translated by either a feed-forward model or a bidirectional LSTM encoder and cross-attention decoder. The generated sentence can be compared with a reference for evaluation.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#087e77"/></marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#8b9ba8"/></marker>
+    <style>
+      .box{fill:#fff;stroke:#cfdae4;stroke-width:2}
+      .highlight{fill:#e6f3f1;stroke:#087e77;stroke-width:2}
+      .soft{fill:#f5f8f8;stroke:#cfdae4;stroke-width:2}
+      .line{fill:none;stroke:#087e77;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+      .direct{fill:none;stroke:#8b9ba8;stroke-width:2.5;stroke-dasharray:8 7;stroke-linecap:round;marker-end:url(#arrow-muted)}
+      text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;text-anchor:middle}
+      .heading{fill:#192638;font-size:23px;font-weight:700}
+      .detail{fill:#5d6d80;font-size:17px}
+      .section{fill:#087e77;font-size:13px;font-weight:700;letter-spacing:1.5px}
+    </style>
+  </defs>
+  <rect width="1900" height="680" fill="#fff"/>
+  <text class="section" x="135" y="58">INPUT</text>
+  <text class="section" x="415" y="58">PREPROCESSING</text>
+  <text class="section" x="765" y="58">MODEL ARCHITECTURES</text>
+  <text class="section" x="1255" y="58">GENERATION</text>
+  <text class="section" x="1735" y="58">EVALUATION</text>
+
+  <path class="line" d="M230 330 H300"/>
+  <path class="line" d="M530 330 H570 V185 H610"/>
+  <path class="line" d="M530 330 H570 V447 H610"/>
+  <path class="line" d="M920 185 H960 V330 H1000"/>
+  <path class="line" d="M920 447 H960 V330 H1000"/>
+  <path class="line" d="M1230 330 H1310"/>
+  <path class="line" d="M1530 330 H1610"/>
+  <path class="direct" d="M1735 495 V390"/>
+
+  <rect class="box" x="40" y="270" width="190" height="120" rx="18"/>
+  <text class="heading" x="135" y="312">Source sentence</text><text class="detail" x="135" y="348">input text</text>
+
+  <rect class="soft" x="300" y="270" width="230" height="120" rx="18"/>
+  <text class="heading" x="415" y="312">Preprocessing</text><text class="detail" x="415" y="345">byte-pair encoding</text><text class="detail" x="415" y="369">vocabulary → token IDs</text>
+
+  <rect class="highlight" x="610" y="120" width="310" height="130" rx="18"/>
+  <text class="heading" x="765" y="160">Feed-forward model</text><text class="detail" x="765" y="193">source + target context windows</text><text class="detail" x="765" y="218">predicts the next token</text>
+
+  <rect class="highlight" x="610" y="375" width="310" height="145" rx="18"/>
+  <text class="heading" x="765" y="415">LSTM encoder–decoder</text><text class="detail" x="765" y="448">bidirectional LSTM encoder</text><text class="detail" x="765" y="472">decoder with cross-attention</text><text class="detail" x="765" y="496">predicts the next token</text>
+
+  <rect class="box" x="1000" y="270" width="230" height="120" rx="18"/>
+  <text class="heading" x="1115" y="312">Decoding</text><text class="detail" x="1115" y="345">greedy / beam search</text><text class="detail" x="1115" y="369">reconstruct text from BPE</text>
+
+  <rect class="box" x="1310" y="270" width="220" height="120" rx="18"/>
+  <text class="heading" x="1420" y="312">Translation</text><text class="detail" x="1420" y="348">generated sentence</text>
+
+  <rect class="soft" x="1610" y="270" width="250" height="120" rx="18"/>
+  <text class="heading" x="1735" y="312">Evaluation</text><text class="detail" x="1735" y="345">BLEU · WER · PER</text><text class="detail" x="1735" y="369">compare with reference</text>
+
+  <rect class="box" x="1610" y="495" width="250" height="105" rx="18"/>
+  <text class="heading" x="1735" y="538">Reference</text><text class="detail" x="1735" y="574">target sentence</text>
+</svg>
