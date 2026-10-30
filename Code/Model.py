@@ -7,9 +7,9 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import yaml
 
-from Blatt3 import FCLayer
-from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
-from Blatt1 import FileHandler as fh1
+from linear_layer import FCLayer
+from preprocessing import BPE, Dictionary, Batch, FileHandler as fh2
+from translation_metrics import FileHandler as fh1
 
 debug = 0
 

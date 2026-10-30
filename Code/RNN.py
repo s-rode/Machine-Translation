@@ -10,9 +10,9 @@ import numpy as np
 import yaml
 from pathlib import Path
 
-from Blatt3 import FCLayer
-from Blatt2 import BPE, Dictionary, Batch, FileHandler as fh2
-from Blatt1 import FileHandler as fh1, Korpus
+from linear_layer import FCLayer
+from preprocessing import BPE, Dictionary, Batch, FileHandler as fh2
+from translation_metrics import FileHandler as fh1, Korpus
 from Model import Loader
 
 debug_level = 0

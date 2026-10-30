@@ -6,8 +6,8 @@ import numpy as np
 import argparse
 from pathlib import Path
 
-from Blatt2 import BPE, Dictionary, Batch, FileHandler
-from Blatt1 import Korpus, FileHandler as fh1
+from preprocessing import BPE, Dictionary, Batch, FileHandler
+from translation_metrics import Korpus, FileHandler as fh1
 from Model import TranslationDataset, Loader, FFTranslator
 from torch.utils.data import DataLoader, Dataset
 

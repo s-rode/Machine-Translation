@@ -1,3 +1,8 @@
+import sys
+
+# Keep existing serialized objects compatible with the renamed module.
+sys.modules.setdefault("Blatt3", sys.modules[__name__])
+
 import torch
 
 

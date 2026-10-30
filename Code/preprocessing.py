@@ -1,8 +1,13 @@
+import sys
+
+# Keep existing serialized objects compatible with the renamed module.
+sys.modules.setdefault("Blatt2", sys.modules[__name__])
+
 import math
 
 import numpy
 
-from Blatt1 import FileHandler as fh
+from translation_metrics import FileHandler as fh
 
 import argparse
 import numpy as np
